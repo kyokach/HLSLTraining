@@ -6,27 +6,31 @@ Shader "KTB/HLSLTraining/Basic"
         _MatCap ("Material Capture", 2D) = "black" {}
         _MatCapStrength ("MatCap Strength", Range(0,1)) = 0.5
         _MatCapMask ("Material Capture Mask", 2D) = "white" {}
-        _NormalMap ("Normal Map", 2D) = "white" {}
+        _NormalMap ("Normal Map", 2D) = "bump" {}
         _NormalMapStrength ("Normal Map Strength", Range(-1,1)) = 0
         _LightDirection ("Light Direction", Vector) = (-1,-1,0,0)
         _LightColor ("Base Color", Color) = (1,1,1,1)
         _SpecIntensity ("Specular Intensity", Range(0,1)) = 0 
         _Shininess ("Shininess", Range(8,128)) = 32
-        _SpecColor ("Specular Color", Color) = (1,1,1,1)
+        _CustomSpecColor ("Specular Color", Color) = (1,1,1,1)
     }
     SubShader
     {
-        Tags { "RenderType"="Opaque" }
+        Tags {"RenderType"="Opaque"}
         LOD 100
 
         Pass
         {
+            Tags {"LightMode"="ForwardBase"}
+
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_fog
 
             #include "UnityCG.cginc"
+            #include "AutoLight.cginc"
+            #include "Lighting.cginc"
             #include "lights.hlsl"
 
             struct appdata
@@ -45,8 +49,8 @@ Shader "KTB/HLSLTraining/Basic"
                 float3 worldPos : TEXCOORD2;
                 float3 tangent : TEXCOORD3;
                 float3 bitangent : TEXCOORD4;
-
-                UNITY_FOG_COORDS(1)
+                SHADOW_COORDS(5)
+                UNITY_FOG_COORDS(6)
             };
 
             sampler2D _MainTex;
@@ -59,38 +63,50 @@ Shader "KTB/HLSLTraining/Basic"
             float4 _LightColor;
             float _SpecIntensity;
             float _Shininess;
-            float4 _SpecColor;
+            float4 _CustomSpecColor;
             float4 _MainTex_ST;
 
             // ===== ディレクションライト =====
             DirectionLight CreateDirectionalLight()
             {
                 DirectionLight dl;
-                dl.lightDirection = normalize(_LightDirection.xyz);
-                dl.lightColor = _LightColor.rgb;
+
+                // シーン上にディレクションライトが存在するかを光の強さで判定
+                if (any(_LightColor0.rgb))
+                {
+                    // シーンのライトを使用
+                    dl.lightDirection = normalize(_WorldSpaceLightPos0.xyz);
+                    dl.lightColor = _LightColor0.rgb;
+                }
+                else
+                {
+                    // プロパティの設定値を使用
+                    dl.lightDirection = -1.0 * normalize(_LightDirection.xyz);
+                    dl.lightColor = _LightColor.rgb;
+                }
                 return dl;
             }
 
             
             float3 ComputeLambert(DirectionLight dl, float3 normal)
             {
-                float diffuse = saturate(dot(normal, -dl.lightDirection));
+                float diffuse = saturate(dot(normal, dl.lightDirection));
                 return diffuse * dl.lightColor;
             }
 
             float3 ComputePhong(DirectionLight dl, float3 normal, float3 viewDir, float shininess)
             {
-                float reflectDir = reflect(dl.lightDirection, normal);
+                float reflectDir = reflect(- dl.lightDirection, normal);
                 float specular = pow(saturate(dot(viewDir, reflectDir)), shininess) * _SpecIntensity;
                 return specular * dl.lightColor;
             }
 
             float3 ComputeBlinnPhong(DirectionLight dl, float3 normal, float3 viewDir, float shininess)
             {
-                float halfDir = normalize(-dl.lightDirection + viewDir);
+                float halfDir = normalize(dl.lightDirection + viewDir);
                 float NdotH = saturate(dot(normal, halfDir));
                 float specular = pow(NdotH, shininess) * _SpecIntensity;
-                return specular * _SpecColor.rgb * dl.lightColor;
+                return specular * _CustomSpecColor.rgb * dl.lightColor;
             }
 
             // ===== Vertex Shader =====
@@ -106,7 +122,9 @@ Shader "KTB/HLSLTraining/Basic"
                 o.tangent = UnityObjectToWorldDir(v.tangent.xyz);
                 o.bitangent = cross(o.normal, o.tangent) * v.tangent.w;
 
+                TRANSFER_SHADOW(o);
                 UNITY_TRANSFER_FOG(o,o.pos);
+
                 return o;
             }
 
@@ -132,6 +150,8 @@ Shader "KTB/HLSLTraining/Basic"
                 // ディレクションライトを定義
                 DirectionLight dl = CreateDirectionalLight();
 
+                UNITY_LIGHT_ATTENUATION(atten, i, i.worldPos);
+
                 // 反射光
                 // Lambert拡散反射
                 float3 lambert = ComputeLambert(dl, N);
@@ -144,7 +164,7 @@ Shader "KTB/HLSLTraining/Basic"
                 // 環境光
                 float3 ambient = max(ShadeSH9(float4(N, 1.0)), 0.05);
                 
-                col.rgb = col.rgb * (lambert + ambient) + phong;
+                col.rgb = col.rgb * (lambert * atten + ambient) + phong * atten;
 
                 // ===== MatCap =====
                 float3 viewNormal = mul((float3x3)UNITY_MATRIX_V, N);
@@ -154,7 +174,7 @@ Shader "KTB/HLSLTraining/Basic"
                 // マスク適用
                 fixed4 matcapMask = tex2D(_MatCapMask, i.uv);
 
-                float3 matCapApplyed = 1 - (1 - col.rgb) * (1 - matcap * matcapMask);
+                float3 matCapApplyed = 1 - (1 - col.rgb) * (1 - matcap * matcapMask.r);
                 col.rgb = lerp(col.rgb, matCapApplyed, _MatCapStrength);
 
                 // ===== Fog =====
