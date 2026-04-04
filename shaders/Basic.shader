@@ -3,6 +3,8 @@ Shader "KTB/HLSLTraining/Basic"
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
+        _NormalMap ("Normal Map", 2D) = "white" {}
+        _NormalMapStrength ("Normal Map Strength", Range(-1,1)) = 0
         _LightDirection ("Light Direction", Vector) = (-1,-1,0,0)
         _LightColor ("Base Color", Color) = (1,1,1,1)
         _SpecIntensity ("Specular Intensity", Range(0,1)) = 0 
@@ -46,7 +48,7 @@ Shader "KTB/HLSLTraining/Basic"
 
             sampler2D _MainTex;
             sampler2D _NormalMap;
-
+            float _NormalMapStrength;
             float4 _LightDirection;
             float4 _LightColor;
             float _SpecIntensity;
@@ -94,6 +96,10 @@ Shader "KTB/HLSLTraining/Basic"
                 o.normal = UnityObjectToWorldNormal(v.normal);
                 o.worldPos = mul(unity_ObjectToWorld, v.pos).xyz;
 
+                // TangentとBiTangentをワールド座標に変換
+                o.tangent = UnityObjectToWorldDir(v.tangent.xyz);
+                o.bitangent = cross(o.normal, o.tangent) * v.tangent.w;
+
                 UNITY_TRANSFER_FOG(o,o.pos);
                 return o;
             }
@@ -102,8 +108,19 @@ Shader "KTB/HLSLTraining/Basic"
             fixed4 frag (v2f i) : SV_Target
             {
                 fixed4 col = tex2D(_MainTex, i.uv);
-                float3 N = normalize(i.normal);
-                UNITY_APPLY_FOG(i.fogCoord, col);
+                
+                // ノーマルマップ適用
+                float3 normalTex = UnpackNormal(tex2D(_NormalMap, i.uv));
+                normalTex.xy *= _NormalMapStrength;
+                normalTex = normalize(normalTex);
+
+                float3x3 TBN = float3x3(
+                    normalize(i.tangent),
+                    normalize(i.bitangent),
+                    normalize(i.normal)
+                );
+
+                float3 N = normalize(mul(normalTex, TBN));
 
                 // ===== Lighting =====
                 // ディレクションライトを定義
@@ -122,6 +139,8 @@ Shader "KTB/HLSLTraining/Basic"
                 float3 ambient = max(ShadeSH9(float4(N, 1.0)), 0.05);
                 
                 col.rgb = col.rgb * (lambert + ambient) + phong;
+
+                UNITY_APPLY_FOG(i.fogCoord, col);
 
                 return col;
             }
