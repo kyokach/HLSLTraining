@@ -3,6 +3,9 @@ Shader "KTB/HLSLTraining/Basic"
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
+        _MatCap ("Material Capture", 2D) = "black" {}
+        _MatCapStrength ("MatCap Strength", Range(0,1)) = 0.5
+        _MatCapMask ("Material Capture Mask", 2D) = "white" {}
         _NormalMap ("Normal Map", 2D) = "white" {}
         _NormalMapStrength ("Normal Map Strength", Range(-1,1)) = 0
         _LightDirection ("Light Direction", Vector) = (-1,-1,0,0)
@@ -47,6 +50,9 @@ Shader "KTB/HLSLTraining/Basic"
             };
 
             sampler2D _MainTex;
+            sampler2D _MatCap;
+            float _MatCapStrength;
+            sampler2D _MatCapMask;
             sampler2D _NormalMap;
             float _NormalMapStrength;
             float4 _LightDirection;
@@ -140,6 +146,18 @@ Shader "KTB/HLSLTraining/Basic"
                 
                 col.rgb = col.rgb * (lambert + ambient) + phong;
 
+                // ===== MatCap =====
+                float3 viewNormal = mul((float3x3)UNITY_MATRIX_V, N);
+                float2 matcapUV = viewNormal.xy * 0.5 + 0.5;
+                float3 matcap = tex2D(_MatCap, matcapUV).rgb;
+
+                // マスク適用
+                fixed4 matcapMask = tex2D(_MatCapMask, i.uv);
+
+                float3 matCapApplyed = 1 - (1 - col.rgb) * (1 - matcap * matcapMask);
+                col.rgb = lerp(col.rgb, matCapApplyed, _MatCapStrength);
+
+                // ===== Fog =====
                 UNITY_APPLY_FOG(i.fogCoord, col);
 
                 return col;
