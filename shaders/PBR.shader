@@ -28,8 +28,14 @@ Shader "KTB/HLSLTraining/PBR"
         [Header(Shadow)]
         _ShadowColor ("Shadow Color", Color) = (0.1, 0.1, 0.15, 1)
         _ShadowSoftness ("Shadow Softness (Wrap)", Range(0, 0.5)) = 0.0
-        _AOIntensity ("AO Intensity", Range(0,1)) = 0.5
-        _AORadius ("AO Radius", Float) = 0.002
+        
+        [Header(SSAO Settings)]
+        [KeywordEnum(Samples_8, Samples_16, Samples_32)]
+        _SSAOQuality    ("Quality (Samples)", Float)            = 1
+        _SSAORadius     ("Radius (World)",  Range(0.01, 2.0))   = 0.3
+        _SSAOBias       ("Depth Bias",      Range(0.001,0.1))   = 0.025
+        _SSAOIntensity  ("Intensity",       Range(0.0, 5.0))    = 2.0
+        _SSAOFalloff    ("Falloff Power",   Range(0.5, 4.0))    = 1.0
         
         [Header(Fallback Light)]
         _LightDirection ("Light Direction", Vector) = (-1,-1,0,0)
@@ -49,6 +55,8 @@ Shader "KTB/HLSLTraining/PBR"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_fwdbase
+            #pragma multi_compile _ _SSAO_BLUR
+            #pragma multi_compile _ _SSAOQUALITY_SAMPLES_8 _SSAOQUALITY_SAMPLES_32
             #pragma multi_compile_fog
 
             #include "UnityCG.cginc"
@@ -82,7 +90,8 @@ Shader "KTB/HLSLTraining/PBR"
             };
 
             // ----- Properties -----
-            sampler2D _CameraDepthTexture;
+            UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
+            float4 _CameraDepthTexture_TexelSize;
             sampler2D _MainTex;
             float4 _MainTex_ST;
             fixed4 _Color;
@@ -101,10 +110,33 @@ Shader "KTB/HLSLTraining/PBR"
             float _IndirectLightIntensity;
             fixed4 _ShadowColor;
             float _ShadowSoftness;
-            float _AOIntensity;
-            float _AORadius;
+            float _SSAORadius;
+            float _SSAOBias;
+            float _SSAOIntensity;
+            float _SSAOFalloff;
+            float _SSAOBlurRadius;
             float4 _LightDirection;
             fixed4 _LightColor;
+
+            static const float3 SSAO_KERNEL[32] =
+            {
+                float3( 0.2024, 0.3868,-0.3220), float3(-0.1551, 0.2711, 0.4906),
+                float3( 0.5000, 0.0794,-0.1420), float3(-0.3841, 0.1429, 0.3019),
+                float3( 0.0562,-0.0865,-0.7420), float3( 0.0347, 0.0423,-0.1627),
+                float3(-0.0235, 0.1960, 0.0984), float3( 0.0159,-0.1762,-0.0523),
+                float3(-0.2490,-0.4138,-0.3512), float3(-0.2713, 0.1194, 0.0209),
+                float3( 0.0094,-0.4938, 0.0077), float3(-0.0921,-0.4012, 0.3501),
+                float3( 0.6207,-0.0172,-0.1043), float3(-0.0611, 0.0687,-0.4920),
+                float3( 0.0389,-0.0722, 0.5183), float3(-0.4202, 0.2716,-0.0310),
+                float3(-0.1344, 0.3794, 0.0720), float3( 0.3175,-0.2628,-0.4442),
+                float3( 0.4516, 0.0557, 0.5278), float3( 0.0994, 0.0214,-0.2381),
+                float3( 0.1608, 0.3041, 0.4180), float3(-0.0622,-0.0057,-0.3094),
+                float3(-0.0215,-0.2508,-0.1161), float3( 0.3285, 0.2449,-0.2627),
+                float3( 0.0894, 0.2960, 0.1853), float3(-0.1561, 0.5153,-0.2131),
+                float3(-0.5250,-0.2121,-0.2417), float3(-0.0971,-0.1154, 0.4621),
+                float3( 0.2812, 0.4166,-0.3231), float3( 0.1835,-0.2804,-0.2685),
+                float3( 0.0994,-0.3512,-0.3168), float3( 0.2677, 0.0574,-0.2622)
+            };
 
             // ==========================================================
             //  PBR 関数群
@@ -153,39 +185,123 @@ Shader "KTB/HLSLTraining/PBR"
                 return (lightScatter * viewScatter) / PI;
             }
 
-            float SampleDepth(float2 uv)
+            // ==========================================================
+            //  SSAO 関数群
+            // ==========================================================
+
+            float InterleavedGradientNoise(float2 screenPixel)
             {
-                return LinearEyeDepth(SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, uv));
+                float3 vec = float3(0.06711056, 0.00583715, 52.9829189);
+                return frac(vec.z * frac(dot(screenPixel, vec.xy)));
             }
 
-            float ComputeSSAO(float2 uv, float3 N, float3 V)
+            float2x2 RandRotation2D(float2 screenUV)
             {
-                float centerDepth = SampleDepth(uv);
+                float2 screenPixel = screenUV * _ScreenParams.xy;
+                float angle = InterleavedGradientNoise(screenPixel) * UNITY_TWO_PI;
+                float cosA = cos(angle);
+                float sinA = sin(angle);
+                return float2x2(cosA, -sinA, sinA, cosA);
+            }
 
-                float ao = 0;
-                int SAMPLE_COUNT = 6;
+            float3 ReconstructViewPos(float2 screenUV, float rawDepth)
+            {
+                float  linearDepth = LinearEyeDepth(rawDepth);
+                float2 ndc = screenUV * 2.0 - 1.0;
+                float3 viewPos;
+                viewPos.x = ndc.x * linearDepth / unity_CameraProjection._11;
+                viewPos.y = ndc.y * linearDepth / unity_CameraProjection._22;
+                viewPos.z = -linearDepth;
+                return viewPos;
+            }
 
-                float2 dirs[6] = {
-                    float2(1,0), float2(-1,0),
-                    float2(0,1), float2(0,-1),
-                    float2(0.7,0.7), float2(-0.7,0.7)
-                };
+            float SampleDepth(float2 uv)
+            {
+                uv = clamp(uv, _CameraDepthTexture_TexelSize.xy, 1.0 - _CameraDepthTexture_TexelSize.xy);
+                return SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, uv);
+            }
 
-                for(int i=0;i<SAMPLE_COUNT;i++)
+            float ComputeSSAO(float2 screenUV, float3 viewPos, float3 viewNormal)
+            {
+                #if defined(_SSAOQUALITY_SAMPLES_8)
+                    #define SSAO_SAMPLE_COUNT 8
+                #elif defined(_SSAOQUALITY_SAMPLES_32)
+                    #define SSAO_SAMPLE_COUNT 32
+                #else
+                    #define SSAO_SAMPLE_COUNT 16
+                #endif
+
+                float2x2 rot = RandRotation2D(screenUV);
+                float occlusion = 0.0;
+                float currentLinearDepth = -viewPos.z;
+
+                float radiusScale = _SSAORadius / max(currentLinearDepth, 0.1);
+
+                [unroll(32)]
+                for (int i = 0; i < SSAO_SAMPLE_COUNT; i++)
                 {
-                    float2 offset = dirs[i] * _AORadius;
-                    float sampleDepth = SampleDepth(uv + offset);
+                    float3 sampleDir = SSAO_KERNEL[i];
+                    sampleDir.xy = mul(rot, sampleDir.xy);
+                    sampleDir = sampleDir * sign(dot(sampleDir, viewNormal) + 1e-5);
 
-                    float diff = sampleDepth - centerDepth;
-                    ao += step(diff, 0.01);
+                    float t = float(i + 1) / float(SSAO_SAMPLE_COUNT);
+                    float scale = lerp(0.1, 1.0, t * t);
+                    float3 samplePos = viewPos + sampleDir * (_SSAORadius * scale);
+
+                    float4 sampleClip = mul(unity_CameraProjection, float4(samplePos, 1.0));
+                    float2 sampleUV = (sampleClip.xy / sampleClip.w) * 0.5 + 0.5;
+
+                    float sampleRawDepth = SampleDepth(sampleUV);
+                    float sampleLinearDepth = LinearEyeDepth(sampleRawDepth);
+
+                    float expectedDepth = -samplePos.z;
+
+                    float depthDiff = expectedDepth - sampleLinearDepth - _SSAOBias;
+                    float occluded = smoothstep(0.0, _SSAORadius * 0.1, depthDiff);
+
+                    float rangeCheck = smoothstep(_SSAORadius, 0.0,
+                                                abs(currentLinearDepth - sampleLinearDepth));
+
+                    occlusion += occluded * rangeCheck;
                 }
 
-                ao = 1.0 - (ao / SAMPLE_COUNT);
+                float aoRaw = occlusion / float(SSAO_SAMPLE_COUNT);
+                float ao = 1.0 - saturate(pow(aoRaw, _SSAOFalloff) * _SSAOIntensity);
+                return ao;
+            }
 
-                float NdotV = saturate(dot(N, V));
-                ao *= NdotV;
+            float ComputeSSAOBlurred(float2 screenUV, float3 viewNormal)
+            {
+                float rawDepthC = SampleDepth(screenUV);
+                float3 viewPosC = ReconstructViewPos(screenUV, rawDepthC);
+                float aoCenter = ComputeSSAO(screenUV, viewPosC, viewNormal);
 
-                return lerp(1.0, ao, _AOIntensity);
+                float2 texel = _CameraDepthTexture_TexelSize.xy * 2.0;
+                float totalAO = aoCenter;
+                float totalWeight = 1.0;
+                float centerDepth = -viewPosC.z;
+
+                static const float2 offsets[4] = {
+                    float2(1, 0), float2(-1, 0),
+                    float2(0, 1), float2(0, -1)
+                };
+
+                [unroll]
+                for (int k = 0; k < 4; k++)
+                {
+                    float2 uv = screenUV + offsets[k] * texel;
+                    float rawD = SampleDepth(uv);
+                    float3 vp = ReconstructViewPos(uv, rawD);
+                    float sampleDepth = -vp.z;
+
+                    float depthWeight = exp(-abs(sampleDepth - centerDepth) * 5.0);
+                    float ao = ComputeSSAO(uv, vp, viewNormal);
+
+                    totalAO += ao * depthWeight;
+                    totalWeight += depthWeight;
+                }
+
+                return totalAO / totalWeight;
             }
 
             // ==========================================================
@@ -287,8 +403,9 @@ Shader "KTB/HLSLTraining/PBR"
 
                 // SSAO
                 float2 screenUV = i.screenPos.xy / i.screenPos.w;
-                float ao = ComputeSSAO(screenUV, N, V);
-                ao = lerp(1.0, ao, _AOIntensity);
+                float3 viewNormal = normalize(mul(UNITY_MATRIX_V, float4(N, 0.0)).xyz);
+
+                float ao = saturate(ComputeSSAOBlurred(screenUV, viewNormal));
 
                 // 直接光
                 float3 directLighting = (diffuse + specular) * lightColor * NdotL * atten * _DirectLightIntensity;
@@ -308,7 +425,6 @@ Shader "KTB/HLSLTraining/PBR"
                 // =====================================================
                 //  MatCap
                 // =====================================================
-                float3 viewNormal = mul((float3x3)UNITY_MATRIX_V, N);
                 float2 matcapUV = viewNormal.xy * 0.495 + 0.5;
                 float3 matcap = tex2D(_MatCap, matcapUV).rgb;
                 fixed matcapMask = tex2D(_MatCapMask, i.uv).r;
@@ -327,36 +443,6 @@ Shader "KTB/HLSLTraining/PBR"
                 UNITY_APPLY_FOG(i.fogCoord, col);
 
                 return col;
-            }
-            ENDCG
-        }
-
-        Pass
-        {
-            Tags { "LightMode"="ShadowCaster" }
-            
-            CGPROGRAM
-            #pragma vertex vertShadow
-            #pragma fragment fragShadow
-            #pragma multi_compile_shadowcaster
-
-            #include "UnityCG.cginc"
-
-            struct v2f_shadow
-            {
-                V2F_SHADOW_CASTER;
-            };
-
-            v2f_shadow vertShadow(appdata_base v)
-            {
-                v2f_shadow o;
-                TRANSFER_SHADOW_CASTER_NORMALOFFSET(o);
-                return o;
-            }
-
-            fixed4 fragShadow(v2f_shadow i) : SV_Target
-            {
-                SHADOW_CASTER_FRAGMENT(i);
             }
             ENDCG
         }
