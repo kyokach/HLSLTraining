@@ -3,49 +3,49 @@ Shader "KTB/HLSLTraining/PBR"
     Properties
     {
         [Header(Surface)]
-        _MainTex ("Albedo", 2D) = "white" {}
-        _Color ("Color Tint", Color) = (1,1,1,1)
+        _MainTex                        ("Albedo", 2D) = "white" {}
+        _Color                          ("Color Tint", Color) = (1,1,1,1)
         
         [Header(PBR Parameters)]
-        _MetallicMap ("Metallic Map", 2D) = "white" {}
-        _Metallic ("Metallic", Range(0,1)) = 0.0
-        _RoughnessMap ("Roughness Map", 2D) = "white" {}
-        _Roughness ("Roughness", Range(0.04, 1.0)) = 0.5
+        _MetallicMap                    ("Metallic Map", 2D) = "white" {}
+        _Metallic                       ("Metallic", Range(0,1)) = 0.0
+        _RoughnessMap                   ("Roughness Map", 2D) = "white" {}
+        _Roughness                      ("Roughness", Range(0.04, 1.0)) = 0.5
         
         [Header(Normal)]
-        _NormalMap ("Normal Map", 2D) = "bump" {}
-        _NormalMapStrength ("Normal Map Strength", Range(0,2)) = 1.0
+        _NormalMap                      ("Normal Map", 2D) = "bump" {}
+        _NormalMapStrength              ("Normal Map Strength", Range(0,2)) = 1.0
         
         [Header(MatCap)]
-        _MatCap ("Material Capture", 2D) = "black" {}
-        _MatCapStrength ("MatCap Strength", Range(0,1)) = 0.0
-        _MatCapMask ("MatCap Mask", 2D) = "white" {}
+        _MatCap                         ("Material Capture", 2D) = "black" {}
+        _MatCapStrength                 ("MatCap Strength", Range(0,1)) = 0.0
+        _MatCapMask                     ("MatCap Mask", 2D) = "white" {}
 
         [Header(Lighting)]
-        _DirectLightIntensity ("Direct Light Intensity", Range(0,10)) = 1.0
-        _IndirectLightIntensity ("Indirect Light Intensity", Range(0,10)) = 1.0
+        _DirectLightIntensity           ("Direct Light Intensity", Range(0,10)) = 1.0
+        _IndirectLightIntensity         ("Indirect Light Intensity", Range(0,10)) = 1.0
         
         [Header(Shadow)]
-        _ShadowColor ("Shadow Color", Color) = (0.1, 0.1, 0.15, 1)
-        _ShadowSoftness ("Shadow Softness (Wrap)", Range(0, 0.5)) = 0.0
+        _ShadowColor                    ("Shadow Color", Color) = (0.1, 0.1, 0.15, 1)
+        _ShadowSoftness                 ("Shadow Softness (Wrap)", Range(0, 0.5)) = 0.0
         
         [Header(SSAO Settings)]
         [KeywordEnum(Samples_8, Samples_16, Samples_32)]
-        _SSAOQuality    ("Quality (Samples)", Float)            = 1
-        _SSAORadius     ("Radius (World)",  Range(0.01, 2.0))   = 0.3
-        _SSAOBias       ("Depth Bias",      Range(0.001,0.1))   = 0.025
-        _SSAOIntensity  ("Intensity",       Range(0.0, 5.0))    = 2.0
-        _SSAOFalloff    ("Falloff Power",   Range(0.5, 4.0))    = 1.0
+        _SSAOQuality                    ("Quality (Samples)", Float) = 1
+        _SSAORadius                     ("Radius (World)",  Range(0.01, 2.0)) = 0.3
+        _SSAOBias                       ("Depth Bias", Range(0.001,0.1)) = 0.025
+        _SSAOIntensity                  ("Intensity", Range(0.0, 5.0)) = 2.0
+        _SSAOFalloff                    ("Falloff Power", Range(0.5, 4.0)) = 1.0
         
         [Header(Fallback Light)]
-        _LightDirection ("Light Direction", Vector) = (-1,-1,0,0)
-        _LightColor ("Light Color", Color) = (1,1,1,1)
+        _LightDirection                 ("Light Direction", Vector) = (-1,-1,0,0)
+        _LightColor                     ("Light Color", Color) = (1,1,1,1)
     }
     
     SubShader
     {
         Tags { "RenderType"="Opaque" }
-        LOD 300
+        LOD 100
 
         Pass
         {
@@ -63,7 +63,7 @@ Shader "KTB/HLSLTraining/PBR"
             #include "AutoLight.cginc"
             #include "Lighting.cginc"
 
-            // ----- Constants -----
+            // Constants
             #define PI 3.14159265359
             #define MIN_ROUGHNESS 0.04
             #define DIELECTRIC_F0 float3(0.04, 0.04, 0.04)
@@ -89,7 +89,7 @@ Shader "KTB/HLSLTraining/PBR"
                 UNITY_FOG_COORDS(7)
             };
 
-            // ----- Properties -----
+            // Properties
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
             float4 _CameraDepthTexture_TexelSize;
             sampler2D _MainTex;
@@ -142,7 +142,7 @@ Shader "KTB/HLSLTraining/PBR"
             //  PBR 関数群
             // ==========================================================
 
-            // --- GGX Normal Distribution Function (Trowbridge-Reitz) ---
+            // GGX Normal Distribution Function (Trowbridge-Reitz)
             float DistributionGGX(float NdotH, float roughness)
             {
                 float a  = roughness * roughness;
@@ -151,7 +151,7 @@ Shader "KTB/HLSLTraining/PBR"
                 return a2 / (PI * d * d + 1e-7);
             }
 
-            // --- Smith-GGX Geometry Function (Height-Correlated) ---
+            // Smith-GGX Geometry Function
             float GeometrySmithGGX(float NdotV, float NdotL, float roughness)
             {
                 float a = roughness * roughness;
@@ -163,13 +163,13 @@ Shader "KTB/HLSLTraining/PBR"
                 return 0.5 / (GGXV + GGXL + 1e-7);
             }
 
-            // --- Schlick-Fresnel ---
+            // Schlick-Fresnel
             float3 FresnelSchlick(float cosTheta, float3 F0)
             {
                 return F0 + (1.0 - F0) * pow(saturate(1.0 - cosTheta), 5.0);
             }
 
-            // ラフネス補正付き Fresnel（間接光用）
+            // Fresnel with roughness
             float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
             {
                 float3 maxF = max((1.0 - roughness).xxx, F0);
@@ -305,7 +305,7 @@ Shader "KTB/HLSLTraining/PBR"
             }
 
             // ==========================================================
-            //  ライト取得
+            //  Directional Light
             // ==========================================================
             void GetDirectionalLight(out float3 lightDir, out float3 lightCol)
             {
@@ -345,15 +345,16 @@ Shader "KTB/HLSLTraining/PBR"
             // ==========================================================
             fixed4 frag(v2f i) : SV_Target
             {
-                // --- Surface Data ---
                 fixed4 albedoTex = tex2D(_MainTex, i.uv) * _Color;
-                float3 albedo    = albedoTex.rgb;
-                
+                float3 albedo    = albedoTex.rgb;                
                 float metallic  = tex2D(_MetallicMap, i.uv).r * _Metallic;
                 float roughness = tex2D(_RoughnessMap, i.uv).r * _Roughness;
                 roughness = max(roughness, MIN_ROUGHNESS);
 
-                // --- Normal Mapping ---
+                float3 L, lightColor;
+                GetDirectionalLight(L, lightColor);
+
+                // Normal Mapping
                 float3 normalTS = UnpackNormal(tex2D(_NormalMap, i.uv));
                 normalTS.xy *= _NormalMapStrength;
                 normalTS = normalize(normalTS);
@@ -363,15 +364,9 @@ Shader "KTB/HLSLTraining/PBR"
                     normalize(i.bitanWS),
                     normalize(i.normalWS)
                 );
-                float3 N = normalize(mul(normalTS, TBN));
-
-                // --- Vectors ---
+                float3 N = normalize(mul(normalTS, TBN));-
                 float3 V = normalize(_WorldSpaceCameraPos - i.worldPos);
                 float NdotV = max(dot(N, V), 1e-7);
-
-                // --- Light ---
-                float3 L, lightColor;
-                GetDirectionalLight(L, lightColor);
 
                 float3 H = normalize(L + V);
                 float NdotL = max(dot(N, L), 0.0);
@@ -407,14 +402,14 @@ Shader "KTB/HLSLTraining/PBR"
 
                 float ao = saturate(ComputeSSAOBlurred(screenUV, viewNormal));
 
-                // 直接光
+                // Direct Light
                 float3 directLighting = (diffuse + specular) * lightColor * NdotL * atten * _DirectLightIntensity;
 
-                // 環境光
+                // Indirect Light
                 float3 irradiance = max(ShadeSH9(float4(N, 1.0)), 0.005);
                 float3 indirectDiffuse = kD * albedo * irradiance * ao * _IndirectLightIntensity;
 
-                // 間接スペキュラ（近似: Fresnel + SH）
+                // Fresnel + SH
                 float3 F_indirect = FresnelSchlickRoughness(NdotV, F0, roughness);
                 float3 indirectSpecular = irradiance * F_indirect * (1.0 - roughness * 0.7) * saturate(pow(ao + NdotV, roughness));
 
@@ -422,9 +417,7 @@ Shader "KTB/HLSLTraining/PBR"
 
                 float3 finalColor = directLighting * shadowTint + indirectLighting;
 
-                // =====================================================
-                //  MatCap
-                // =====================================================
+                // MatCap
                 float2 matcapUV = viewNormal.xy * 0.495 + 0.5;
                 float3 matcap = tex2D(_MatCap, matcapUV).rgb;
                 fixed matcapMask = tex2D(_MatCapMask, i.uv).r;
@@ -436,9 +429,7 @@ Shader "KTB/HLSLTraining/PBR"
                 );
                 finalColor = matCapBlended;
 
-                // =====================================================
-                //  Fog
-                // =====================================================
+                // Fog
                 fixed4 col = fixed4(finalColor, albedoTex.a);
                 UNITY_APPLY_FOG(i.fogCoord, col);
 
