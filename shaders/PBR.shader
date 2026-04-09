@@ -364,7 +364,7 @@ Shader "KTB/HLSLTraining/PBR"
                     normalize(i.bitanWS),
                     normalize(i.normalWS)
                 );
-                float3 N = normalize(mul(normalTS, TBN));-
+                float3 N = normalize(mul(normalTS, TBN));
                 float3 V = normalize(_WorldSpaceCameraPos - i.worldPos);
                 float NdotV = max(dot(N, V), 1e-7);
 
