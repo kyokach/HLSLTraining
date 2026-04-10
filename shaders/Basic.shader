@@ -31,7 +31,7 @@ Shader "KTB/HLSLTraining/Basic"
             #include "UnityCG.cginc"
             #include "AutoLight.cginc"
             #include "Lighting.cginc"
-            #include "lights.hlsl"
+            #include "light.hlsl"
 
             struct appdata
             {
