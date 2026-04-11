@@ -95,7 +95,7 @@ Shader "KTB/HLSLTraining/PBR"
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
-            UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
+            UNITY_DECLARE_SCREENSPACE_TEXTURE(_CameraDepthTexture);
             float4      _CameraDepthTexture_TexelSize;
 
             sampler2D   _MainTex;
@@ -161,16 +161,17 @@ Shader "KTB/HLSLTraining/PBR"
             float3 ReconstructViewPos(float2 uv, float rawDepth) {
                 float ld = LinearEyeDepth(rawDepth);
                 float2 ndc = uv * 2.0 - 1.0;
+                float4x4 proj = UNITY_MATRIX_P;
                 float3 vp;
-                vp.x = ndc.x * ld / unity_CameraProjection._11;
-                vp.y = ndc.y * ld / unity_CameraProjection._22;
+                vp.x = ndc.x * ld / proj._11;
+                vp.y = ndc.y * ld / proj._22;
                 vp.z = -ld;
                 return vp;
             }
 
             float SampleDepth(float2 uv) {
                 uv = clamp(uv, _CameraDepthTexture_TexelSize.xy, 1.0 - _CameraDepthTexture_TexelSize.xy);
-                return SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, uv);
+                return UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CameraDepthTexture, uv).r;
             }
 
             float ComputeSSAO(float2 screenUV, float3 viewPos, float3 viewN)
@@ -196,7 +197,7 @@ Shader "KTB/HLSLTraining/PBR"
                     float scale = lerp(0.1, 1.0, t * t);
                     float3 sp = viewPos + sd * (_SSAORadius * scale);
 
-                    float4 sc = mul(unity_CameraProjection, float4(sp, 1.0));
+                    float4 sc = mul(UNITY_MATRIX_P, float4(sp, 1.0));
                     float2 su = (sc.xy / sc.w) * 0.5 + 0.5;
                     float sr = SampleDepth(su);
                     float sl = LinearEyeDepth(sr);
