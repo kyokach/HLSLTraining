@@ -78,6 +78,7 @@ Shader "KTB/HLSLTraining/PBR"
                 float2 uv       : TEXCOORD0;
                 float3 normal   : NORMAL;
                 float4 tangent  : TANGENT;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct v2f
@@ -91,6 +92,7 @@ Shader "KTB/HLSLTraining/PBR"
                 float3 bitanWS   : TEXCOORD5;
                 SHADOW_COORDS(6)
                 UNITY_FOG_COORDS(7)
+                UNITY_VERTEX_OUTPUT_STEREO
             };
 
             UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
@@ -230,6 +232,10 @@ Shader "KTB/HLSLTraining/PBR"
             v2f vert(appdata v)
             {
                 v2f o;
+                UNITY_INITIALIZE_OUTPUT(v2f,o);
+                UNITY_SETUP_INSTANCE_ID(v);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+
                 o.pos       = UnityObjectToClipPos(v.pos);
                 o.uv        = TRANSFORM_TEX(v.uv, _MainTex);
                 o.normalWS  = UnityObjectToWorldNormal(v.normal);
@@ -244,6 +250,8 @@ Shader "KTB/HLSLTraining/PBR"
 
             fixed4 frag(v2f i) : SV_Target
             {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+
                 fixed4 albedoTex = tex2D(_MainTex, i.uv) * _Color;
                 float3 albedo    = albedoTex.rgb;
                 float  metallic  = tex2D(_MetallicMap,  i.uv).r * _Metallic;
