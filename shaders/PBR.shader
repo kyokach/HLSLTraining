@@ -161,10 +161,9 @@ Shader "KTB/HLSLTraining/PBR"
             float3 ReconstructViewPos(float2 uv, float rawDepth) {
                 float ld = LinearEyeDepth(rawDepth);
                 float2 ndc = uv * 2.0 - 1.0;
-                float4x4 proj = UNITY_MATRIX_P;
                 float3 vp;
-                vp.x = ndc.x * ld / proj._11;
-                vp.y = ndc.y * ld / proj._22;
+                vp.x = ndc.x * ld / UNITY_MATRIX_P._11;
+                vp.y = ndc.y * ld / UNITY_MATRIX_P._22;
                 vp.z = -ld;
                 return vp;
             }
