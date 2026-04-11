@@ -161,9 +161,14 @@ Shader "KTB/HLSLTraining/PBR"
             float3 ReconstructViewPos(float2 uv, float rawDepth) {
                 float ld = LinearEyeDepth(rawDepth);
                 float2 ndc = uv * 2.0 - 1.0;
+                #if defined(USING_STEREO_MATRICES)
+                    float4x4 proj = unity_StereoCameraProjection[unity_StereoEyeIndex];
+                #else
+                    float4x4 proj = unity_CameraProjection;
+                #endif
                 float3 vp;
-                vp.x = ndc.x * ld / UNITY_MATRIX_P._11;
-                vp.y = ndc.y * ld / UNITY_MATRIX_P._22;
+                vp.x = ndc.x * ld / proj._11;
+                vp.y = ndc.y * ld / proj._22;
                 vp.z = -ld;
                 return vp;
             }
@@ -196,7 +201,11 @@ Shader "KTB/HLSLTraining/PBR"
                     float scale = lerp(0.1, 1.0, t * t);
                     float3 sp = viewPos + sd * (_SSAORadius * scale);
 
-                    float4 sc = mul(UNITY_MATRIX_P, float4(sp, 1.0));
+                    #if defined(USING_STEREO_MATRICES)
+                        float4 sc = mul(unity_StereoCameraProjection[unity_StereoEyeIndex], float4(sp, 1.0));
+                    #else
+                        float4 sc = mul(unity_CameraProjection, float4(sp, 1.0));
+                    #endif
                     float2 su = (sc.xy / sc.w) * 0.5 + 0.5;
                     float sr = SampleDepth(su);
                     float sl = LinearEyeDepth(sr);
