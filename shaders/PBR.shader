@@ -161,21 +161,16 @@ Shader "KTB/HLSLTraining/PBR"
             float3 ReconstructViewPos(float2 uv, float rawDepth) {
                 float ld = LinearEyeDepth(rawDepth);
                 float2 ndc = uv * 2.0 - 1.0;
-                #if defined(USING_STEREO_MATRICES)
-                    float4x4 proj = unity_StereoCameraProjection[unity_StereoEyeIndex];
-                #else
-                    float4x4 proj = unity_CameraProjection;
-                #endif
                 float3 vp;
-                vp.x = ndc.x * ld / proj._11;
-                vp.y = ndc.y * ld / proj._22;
+                vp.x = ndc.x * ld / unity_CameraProjection._11;
+                vp.y = ndc.y * ld / unity_CameraProjection._22;
                 vp.z = -ld;
                 return vp;
             }
 
             float SampleDepth(float2 uv) {
                 uv = clamp(uv, _CameraDepthTexture_TexelSize.xy, 1.0 - _CameraDepthTexture_TexelSize.xy);
-                return UNITY_SAMPLE_SCREENSPACE_TEXTURE(_CameraDepthTexture, uv).r;
+                return SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, uv);
             }
 
             float ComputeSSAO(float2 screenUV, float3 viewPos, float3 viewN)
@@ -201,11 +196,7 @@ Shader "KTB/HLSLTraining/PBR"
                     float scale = lerp(0.1, 1.0, t * t);
                     float3 sp = viewPos + sd * (_SSAORadius * scale);
 
-                    #if defined(USING_STEREO_MATRICES)
-                        float4 sc = mul(unity_StereoCameraProjection[unity_StereoEyeIndex], float4(sp, 1.0));
-                    #else
-                        float4 sc = mul(unity_CameraProjection, float4(sp, 1.0));
-                    #endif
+                    float4 sc = mul(unity_CameraProjection, float4(sp, 1.0));
                     float2 su = (sc.xy / sc.w) * 0.5 + 0.5;
                     float sr = SampleDepth(su);
                     float sl = LinearEyeDepth(sr);
@@ -299,7 +290,7 @@ Shader "KTB/HLSLTraining/PBR"
                                      _LightDirection.xyz,
                                      _LightColor.rgb,
                                      atten);
-                
+
                 float3 rimL, rimLCol;
                 KTBPBR_GetDirectionalLight(_LightDirection.xyz, _LightColor.rgb, rimL, rimLCol);
 
