@@ -44,6 +44,7 @@ Shader "KTB/HLSLTraining/PBR"
         _SSAOBias                       ("Depth Bias", Range(0.001,0.1)) = 0.025
         _SSAOIntensity                  ("Intensity", Range(0.0, 5.0)) = 2.0
         _SSAOFalloff                    ("Falloff Power", Range(0.5, 4.0)) = 1.0
+        _SSAOThickness                  ("Thickness (xRadius)", Range(1.0, 4.0)) = 2.0
 
         [Header(Fallback Light)]
         _LightDirection                 ("Light Direction", Vector) = (-1,-1,0,0)
@@ -95,7 +96,7 @@ Shader "KTB/HLSLTraining/PBR"
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
-            UNITY_DECLARE_SCREENSPACE_TEXTURE(_CameraDepthTexture);
+            UNITY_DECLARE_DEPTH_TEXTURE(_CameraDepthTexture);
             float4      _CameraDepthTexture_TexelSize;
 
             sampler2D   _MainTex;
@@ -124,8 +125,17 @@ Shader "KTB/HLSLTraining/PBR"
             float       _SSAOBias;
             float       _SSAOIntensity;
             float       _SSAOFalloff;
+            float       _SSAOThickness;
             float4      _LightDirection;
             fixed4      _LightColor;
+
+            #if defined(_SSAOQUALITY_SAMPLES_8)
+                #define SSAO_SAMPLE_COUNT 8
+            #elif defined(_SSAOQUALITY_SAMPLES_32)
+                #define SSAO_SAMPLE_COUNT 32
+            #else
+                #define SSAO_SAMPLE_COUNT 16
+            #endif
 
             static const float3 SSAO_KERNEL[32] =
             {
@@ -147,88 +157,120 @@ Shader "KTB/HLSLTraining/PBR"
                 float3( 0.0994,-0.3512,-0.3168), float3( 0.2677, 0.0574,-0.2622)
             };
 
-            float InterleavedGradientNoise(float2 p) {
-                float3 v = float3(0.06711056, 0.00583715, 52.9829189);
-                return frac(v.z * frac(dot(p, v.xy)));
-            }
-
-            float2x2 RandRotation2D(float2 uv) {
-                float a = InterleavedGradientNoise(uv * _ScreenParams.xy) * UNITY_TWO_PI;
-                float c = cos(a), s = sin(a);
-                return float2x2(c,-s,s,c);
-            }
-
-            float3 ReconstructViewPos(float2 uv, float rawDepth) {
-                float ld = LinearEyeDepth(rawDepth);
-                float2 ndc = uv * 2.0 - 1.0;
-                float3 vp;
-                vp.x = ndc.x * ld / unity_CameraProjection._11;
-                vp.y = ndc.y * ld / unity_CameraProjection._22;
-                vp.z = -ld;
-                return vp;
-            }
-
-            float SampleDepth(float2 uv) {
-                uv = clamp(uv, _CameraDepthTexture_TexelSize.xy, 1.0 - _CameraDepthTexture_TexelSize.xy);
-                return SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, uv);
-            }
-
-            float ComputeSSAO(float2 screenUV, float3 viewPos, float3 viewN)
+            float4x4 GetStereoCameraProjection()
             {
-                #if defined(_SSAOQUALITY_SAMPLES_8)
-                    #define SSAO_SAMPLE_COUNT 8
-                #elif defined(_SSAOQUALITY_SAMPLES_32)
-                    #define SSAO_SAMPLE_COUNT 32
-                #else
-                    #define SSAO_SAMPLE_COUNT 16
-                #endif
-                float2x2 rot = RandRotation2D(screenUV);
-                float occlusion = 0.0;
-                float curDepth = -viewPos.z;
-
-                [unroll(32)]
-                for (int i = 0; i < SSAO_SAMPLE_COUNT; i++)
-                {
-                    float3 sd = SSAO_KERNEL[i];
-                    sd.xy = mul(rot, sd.xy);
-                    sd = sd * sign(dot(sd, viewN) + 1e-5);
-                    float t = float(i + 1) / float(SSAO_SAMPLE_COUNT);
-                    float scale = lerp(0.1, 1.0, t * t);
-                    float3 sp = viewPos + sd * (_SSAORadius * scale);
-
-                    float4 sc = mul(unity_CameraProjection, float4(sp, 1.0));
-                    float2 su = (sc.xy / sc.w) * 0.5 + 0.5;
-                    float sr = SampleDepth(su);
-                    float sl = LinearEyeDepth(sr);
-                    float diff = (-sp.z) - sl - _SSAOBias;
-                    float occ = smoothstep(0.0, _SSAORadius * 0.1, diff);
-                    float rc = smoothstep(_SSAORadius, 0.0, abs(curDepth - sl));
-                    occlusion += occ * rc;
-                }
-                float aoRaw = occlusion / float(SSAO_SAMPLE_COUNT);
-                return 1.0 - saturate(pow(aoRaw, _SSAOFalloff) * _SSAOIntensity);
+            #if defined(USING_STEREO_MATRICES)
+                return unity_StereoCameraProjection[unity_StereoEyeIndex];
+            #else
+                return unity_CameraProjection;
+            #endif
             }
 
-            // float ComputeSSAOBlurred(float2 screenUV, float3 viewN)
-            // {
-            //     float rd = SampleDepth(screenUV);
-            //     float3 vp = ReconstructViewPos(screenUV, rd);
-            //     float aoC = ComputeSSAO(screenUV, vp, viewN);
-            //     float2 texel = _CameraDepthTexture_TexelSize.xy * 2.0;
-            //     float total = aoC, w = 1.0;
-            //     float cd = -vp.z;
-            //     static const float2 offs[4] = { float2(1,0), float2(-1,0), float2(0,1), float2(0,-1) };
-            //     [unroll]
-            //     for (int k = 0; k < 4; k++) {
-            //         float2 uv = screenUV + offs[k] * texel;
-            //         float3 vp2 = ReconstructViewPos(uv, SampleDepth(uv));
-            //         float dw = exp(-abs(-vp2.z - cd) * 5.0);
-            //         total += ComputeSSAO(uv, vp2, viewN) * dw;
-            //         w += dw;
-            //     }
-            //     return total / w;
-            // }
+            float InterleavedGradientNoise(float2 p)
+            {
+                return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715))));
+            }
 
+            float SampleDepth(float2 screenUV)
+            {
+                return SAMPLE_DEPTH_TEXTURE(
+                    _CameraDepthTexture,
+                    UnityStereoTransformScreenSpaceTex(screenUV)
+                );
+            }
+
+            float3 ReconstructViewPos(float2 screenUV, float rawDepth)
+            {
+                float linearDepth = LinearEyeDepth(rawDepth);
+                float2 ndc = screenUV * 2.0 - 1.0;
+
+                float4x4 proj = GetStereoCameraProjection();
+                float2 viewXY = float2(
+                    (ndc.x - proj._m02) / proj._m00,
+                    (ndc.y - proj._m12) / proj._m11
+                );
+
+                return float3(viewXY * linearDepth, -linearDepth);
+            }
+
+            float ComputeSSAO(float2 screenUV, float3 P, float3 N)
+            {
+                float2 pixelCoord = floor(screenUV * _ScreenParams.xy);
+
+                float3 up = (abs(N.z) < 0.999) ? float3(0, 0, 1) : float3(1, 0, 0);
+                float3 T0 = normalize(cross(up, N));
+                float3 B0 = cross(N, T0);
+
+                float theta = InterleavedGradientNoise(pixelCoord) * KTBPBR_PI * 2.0;
+                float cosT = cos(theta);
+                float sinT = sin(theta);
+
+                float3 T_r = T0 * cosT + B0 * sinT;
+                float3 B_r = -T0 * sinT + B0 * cosT;
+                float3x3 TBN = float3x3(T_r, B_r, N);
+
+                float4x4 proj = GetStereoCameraProjection();
+
+                #if defined(UNITY_REVERSED_Z)
+                    const float FAR_EPS_MIN = 1e-6;
+                #else
+                    const float FAR_EPS_MAX = 1.0 - 1e-6;
+                #endif
+
+                float ao = 0.0;
+                float validSamples = 0.0;
+
+                [unroll]
+                for (int s = 0; s < SSAO_SAMPLE_COUNT; ++s)
+                {
+                    float3 k = SSAO_KERNEL[s];
+                    k.z = abs(k.z);
+
+                    float t = float(s) / float(SSAO_SAMPLE_COUNT);
+                    float scale = lerp(0.1, 1.0, t * t);
+                    float3 dir = k * scale;
+
+                    float3 sampleOff = mul(dir * _SSAORadius, TBN);
+                    float3 samplePos = P + sampleOff;
+
+                    float4 sc = mul(proj, float4(samplePos, 1.0));
+                    if (sc.w < 1e-4) continue;
+
+                    float2 sampleUV;
+                    sampleUV.x = sc.x / sc.w * 0.5 + 0.5;
+                    sampleUV.y = sc.y / sc.w * 0.5 + 0.5;
+
+                    if (any(sampleUV < 0.0) || any(sampleUV > 1.0)) continue;
+
+                    float2 sampleUVStereo = UnityStereoTransformScreenSpaceTex(sampleUV);
+                    float rawDepth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, sampleUVStereo);
+
+                #if defined(UNITY_REVERSED_Z)
+                    if (rawDepth <= FAR_EPS_MIN) continue;
+                #else
+                    if (rawDepth >= FAR_EPS_MAX) continue;
+                #endif
+
+                    float sceneDepth = LinearEyeDepth(rawDepth);
+                    float sampleEyeZ = -samplePos.z;
+
+                    float dynamicBias = _SSAOBias * max(1.0, -P.z * 0.05);
+
+                    float diff = sampleEyeZ - sceneDepth;
+                    float rangeCheck = smoothstep(1.0, 0.0, abs(diff) / _SSAORadius);
+
+                    bool occluded = (diff > dynamicBias) && (diff < _SSAORadius * _SSAOThickness);
+                    ao += occluded ? pow(rangeCheck, _SSAOFalloff) : 0.0;
+
+                    validSamples += 1.0;
+                }
+                float norm = max(validSamples, 1.0);
+                return saturate(1.0 - (ao / norm) * _SSAOIntensity);
+            }
+
+            // -----------------------------------------------------------------
+            // Vertex / Fragment
+            // -----------------------------------------------------------------
             v2f vert(appdata v)
             {
                 v2f o;
@@ -270,9 +312,8 @@ Shader "KTB/HLSLTraining/PBR"
                 float2 screenUV = i.screenPos.xy / i.screenPos.w;
                 float3 viewN    = normalize(mul((float3x3)UNITY_MATRIX_V, N));
 
-                float rd = SampleDepth(screenUV);
-                float3 vp = ReconstructViewPos(screenUV, rd);
-                float ao = ComputeSSAO(screenUV, vp, viewN);
+                float3 P  = mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).xyz;
+                float  ao = ComputeSSAO(screenUV, P, viewN);
 
                 KTBPBRSurface s;
                 s.albedo    = albedo;
