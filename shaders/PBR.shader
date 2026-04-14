@@ -268,6 +268,28 @@ Shader "KTB/HLSLTraining/PBR"
                 return saturate(1.0 - (ao / norm) * _SSAOIntensity);
             }
 
+            float ComputeSSAOBlurred(float2 screenUV, float3 viewN)
+            {
+                // サンプリング点の四方でSSAOを計算することでより滑らかなSSAOを算出
+                // SSAO計算量が5倍になり非常に高負荷なため注意!!
+                float rd = SampleDepth(screenUV);
+                float3 vp = ReconstructViewPos(screenUV, rd);
+                float aoC = ComputeSSAO(screenUV, vp, viewN);
+                float2 texel = _CameraDepthTexture_TexelSize.xy * 2.0;
+                float total = aoC, w = 1.0;
+                float cd = -vp.z;
+                static const float2 offs[4] = { float2(1,0), float2(-1,0), float2(0,1), float2(0,-1) };
+                [unroll]
+                for (int k = 0; k < 4; k++) {
+                    float2 uv = screenUV + offs[k] * texel;
+                    float3 vp2 = ReconstructViewPos(uv, SampleDepth(uv));
+                    float dw = exp(-abs(-vp2.z - cd) * 5.0);
+                    total += ComputeSSAO(uv, vp2, viewN) * dw;
+                    w += dw;
+                }
+                return total / w;
+            }
+
             // -----------------------------------------------------------------
             // Vertex / Fragment
             // -----------------------------------------------------------------
