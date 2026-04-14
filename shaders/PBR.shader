@@ -40,9 +40,9 @@ Shader "KTB/HLSLTraining/PBR"
         [Header(SSAO Settings)]
         [KeywordEnum(Samples_8, Samples_16, Samples_32)]
         _SSAOQuality                    ("Quality (Samples)", Float) = 1
-        _SSAORadius                     ("Radius (World)",  Range(0.01, 2.0)) = 0.3
-        _SSAOBias                       ("Depth Bias", Range(0.001,0.1)) = 0.025
-        _SSAOIntensity                  ("Intensity", Range(0.0, 5.0)) = 2.0
+        _SSAORadius                     ("Radius (World)",  Range(0.01, 2.0)) = 0.04
+        _SSAOBias                       ("Depth Bias", Range(0.001,0.1)) = 0.005
+        _SSAOIntensity                  ("Intensity", Range(0.0, 5.0)) = 1.0
         _SSAOFalloff                    ("Falloff Power", Range(0.5, 4.0)) = 1.0
         _SSAOThickness                  ("Thickness (xRadius)", Range(1.0, 4.0)) = 2.0
 
