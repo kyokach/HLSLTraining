@@ -6,6 +6,24 @@ Shader "KTB/HLSLTraining/PBR"
         _MainTex                        ("Albedo", 2D) = "white" {}
         _Color                          ("Color Tint", Color) = (1,1,1,1)
 
+        // ------------------------------------------------------------------
+        //  Rendering Mode
+        //  推奨設定:
+        //    Opaque       : SrcBlend=One,      DstBlend=Zero,             ZWrite=On,  Queue=Geometry(2000)
+        //    Cutout       : SrcBlend=One,      DstBlend=Zero,             ZWrite=On,  Queue=AlphaTest(2450)
+        //    Transparent  : SrcBlend=SrcAlpha, DstBlend=OneMinusSrcAlpha, ZWrite=Off, Queue=Transparent(3000)
+        // ------------------------------------------------------------------
+        [Header(Rendering Mode)]
+        [KeywordEnum(Opaque, Cutout, Fade, Transparent)]
+        _SurfaceMode                    ("Surface Mode", Float) = 0
+        _Cutoff                         ("Alpha Cutoff (Cutout)", Range(0,1)) = 0.5
+        [Enum(UnityEngine.Rendering.BlendMode)]
+        _SrcBlend                       ("Src Blend", Float) = 1
+        [Enum(UnityEngine.Rendering.BlendMode)]
+        _DstBlend                       ("Dst Blend", Float) = 0
+        [Enum(Off, 0, On, 1)]
+        _ZWrite                         ("ZWrite", Float) = 1
+
         [Header(PBR Parameters)]
         _MetallicMap                    ("Metallic Map", 2D) = "white" {}
         _Metallic                       ("Metallic", Range(0,1)) = 0.0
@@ -31,6 +49,8 @@ Shader "KTB/HLSLTraining/PBR"
         _IndirectLightIntensity         ("Indirect Light Intensity", Range(0,10)) = 1.0
 
         [Header(Rim Lighting)]
+        [Toggle(_RIM_ON)]
+        _RimEnabled                     ("Enable Rim", Float) = 0
         _BackRimColor                   ("Backlight Rim Color", Color) = (1, 1, 1, 1)
         _BackRimPower                   ("Backlight Rim Power", Range(0.5, 8)) = 3.0
         _BackRimIntensity               ("Backlight Rim Intensity", Range(0, 5)) = 0.3
@@ -43,6 +63,8 @@ Shader "KTB/HLSLTraining/PBR"
         _ShadowSoftness                 ("Shadow Softness (Wrap)", Range(0, 0.5)) = 0.0
 
         [Header(SSAO Settings)]
+        [Toggle(_SSAO_ON)]
+        _SSAOEnabled                    ("Enable SSAO", Float) = 0
         [KeywordEnum(Samples_8, Samples_16, Samples_32)]
         _SSAOQuality                    ("Quality (Samples)", Float) = 1
         _SSAORadius                     ("Radius (World)",  Range(0.01, 2.0)) = 0.04
@@ -58,21 +80,28 @@ Shader "KTB/HLSLTraining/PBR"
 
     SubShader
     {
-        Tags { "RenderType"="Opaque" }
+        Tags { "RenderType"="Opaque" "Queue"="Geometry" "IgnoreProjector"="True" }
         LOD 100
 
         Pass
         {
             Tags { "LightMode"="ForwardBase" }
 
+            Blend  [_SrcBlend] [_DstBlend]
+            ZWrite [_ZWrite]
+            Cull   Back
+
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_fwdbase
-            #pragma multi_compile _ VERTEXLIGHT_ON
-            #pragma multi_compile _ _SSAOQUALITY_SAMPLES_8 _SSAOQUALITY_SAMPLES_32
-            #pragma multi_compile _MATCAPBLENDMODE_ADDITIVE _MATCAPBLENDMODE_MULTIPLY _MATCAPBLENDMODE_SCREEN _MATCAPBLENDMODE_LINEAR
+            #pragma shader_feature_local _ VERTEXLIGHT_ON
+            #pragma shader_feature_local _ _SSAOQUALITY_SAMPLES_8 _SSAOQUALITY_SAMPLES_32
+            #pragma shader_feature_local _MATCAPBLENDMODE_ADDITIVE _MATCAPBLENDMODE_MULTIPLY _MATCAPBLENDMODE_SCREEN _MATCAPBLENDMODE_LINEAR
             #pragma shader_feature_local _MATCAP_ON
+            #pragma shader_feature_local _RIM_ON
+            #pragma shader_feature_local _SSAO_ON
+            #pragma shader_feature_local _SURFACEMODE_OPAQUE _SURFACEMODE_CUTOUT _SURFACEMODE_TRANSPARENT
             #pragma multi_compile_fog
 
             #include "UnityCG.cginc"
@@ -136,6 +165,7 @@ Shader "KTB/HLSLTraining/PBR"
             float       _SSAOThickness;
             float4      _LightDirection;
             fixed4      _LightColor;
+            float       _Cutoff;
 
             #if defined(_SSAOQUALITY_SAMPLES_8)
                 #define SSAO_SAMPLE_COUNT 8
@@ -326,6 +356,12 @@ Shader "KTB/HLSLTraining/PBR"
 
                 fixed4 albedoTex = tex2D(_MainTex, i.uv) * _Color;
                 float3 albedo    = albedoTex.rgb;
+                float  alpha     = albedoTex.a;
+
+                #if defined(_SURFACEMODE_CUTOUT)
+                    clip(alpha - _Cutoff);
+                #endif
+
                 float  metallic  = tex2D(_MetallicMap,  i.uv).r * _Metallic;
                 float  roughness = tex2D(_RoughnessMap, i.uv).r * _Roughness;
                 roughness = max(roughness, KTBPBR_MIN_ROUGHNESS);
@@ -342,8 +378,12 @@ Shader "KTB/HLSLTraining/PBR"
                 float2 screenUV = i.screenPos.xy / i.screenPos.w;
                 float3 viewN    = normalize(mul((float3x3)UNITY_MATRIX_V, N));
 
-                float3 P  = mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).xyz;
-                float  ao = ComputeSSAO(screenUV, P, viewN);
+                #if defined(_SSAO_ON)
+                    float3 P  = mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).xyz;
+                    float ao = ComputeSSAO(screenUV, P, viewN);
+                #else
+                    float ao = 1.0;
+                #endif
 
                 KTBPBRSurface s;
                 s.albedo    = albedo;
@@ -365,19 +405,28 @@ Shader "KTB/HLSLTraining/PBR"
                 float3 rimL, rimLCol;
                 KTBPBR_GetDirectionalLight(_LightDirection.xyz, _LightColor.rgb, rimL, rimLCol);
 
-                KTBPBRRimParams rimP;
-                rimP.backRimColor      = _BackRimColor.rgb;
-                rimP.backRimPower      = _BackRimPower;
-                rimP.backRimIntensity  = _BackRimIntensity;
-                rimP.innerRimColor     = _InnerRimColor.rgb;
-                rimP.innerRimPower     = _InnerRimPower;
-                rimP.innerRimIntensity = _InnerRimIntensity;
+                // Rim
+                #if defined(_RIM_ON)
+                    KTBPBRRimParams rimP;
+                    rimP.backRimColor      = _BackRimColor.rgb;
+                    rimP.backRimPower      = _BackRimPower;
+                    rimP.backRimIntensity  = _BackRimIntensity;
+                    rimP.innerRimColor     = _InnerRimColor.rgb;
+                    rimP.innerRimPower     = _InnerRimPower;
+                    rimP.innerRimIntensity = _InnerRimIntensity;
 
-                float3 rim = KTBPBR_ComputeRim(s, rimL, rimLCol, atten, rimP);
+                    float3 rim = KTBPBR_ComputeRim(s, rimL, rimLCol, atten, rimP);
+                #else
+                    float3 rim = 0.0;
+                #endif
 
                 float NdotL_main = saturate(dot(N, normalize(_WorldSpaceLightPos0.xyz)));
                 float wrapped = saturate((NdotL_main + _ShadowSoftness) / (1.0 + _ShadowSoftness));
                 float3 shadowTint = lerp(_ShadowColor.rgb, float3(1,1,1), atten * wrapped);
+
+                #if defined(_SURFACEMODE_TRANSPARENT)
+                    KTBPBR_PreMultiplyAlpha(datas, alpha, metallic);
+                #endif
 
                 float3 direct   = (datas.directDiffuse + datas.directSpecular) * _DirectLightIntensity * shadowTint;
                 float3 indirect = (datas.indirectDiffuse + datas.indirectSpecular) * _IndirectLightIntensity * ao;
@@ -401,9 +450,85 @@ Shader "KTB/HLSLTraining/PBR"
                     #endif
                 #endif
 
-                fixed4 col = fixed4(finalColor, albedoTex.a);
+                #if defined(_SURFACEMODE_OPAQUE) || defined(_SURFACEMODE_CUTOUT)
+                    alpha = 1.0;
+                #endif
+
+                fixed4 col = fixed4(finalColor, alpha);
+
+                // #if defined(_SURFACEMODE_TRANSPARENT)
+                //     #if defined(UNITY_PASS_FORWARDBASE) || defined(UNITY_PASS_FORWARDADD)
+                //         float fogCoord = i.fogCoord;
+                //         #if defined(FOG_LINEAR) || defined(FOG_EXP) || defined(FOG_EXP2)
+                //             UNITY_CALC_FOG_FACTOR_RAW(fogCoord);
+                //             col.rgb = lerp(unity_FogColor.rgb, col.rgb, saturate(unityFogFactor));
+                //         #endif
+                //     #endif
+                // #else
+                //     UNITY_APPLY_FOG(i.fogCoord, col);
+                // #endif
+
                 UNITY_APPLY_FOG(i.fogCoord, col);
+
                 return col;
+            }
+            ENDCG
+        }
+
+        Pass
+        {
+            Tags { "LightMode"="ShadowCaster" }
+            ZWrite On
+            ZTest LEqual
+            Cull Back
+
+            CGPROGRAM
+            #pragma vertex   vertShadow
+            #pragma fragment fragShadow
+            #pragma multi_compile_shadowcaster
+            #pragma shader_feature_local _SURFACEMODE_OPAQUE _SURFACEMODE_CUTOUT _SURFACEMODE_TRANSPARENT
+
+            #include "UnityCG.cginc"
+
+            sampler2D _MainTex;
+            float4    _MainTex_ST;
+            fixed4    _Color;
+            float     _Cutoff;
+
+            struct appdataShadow
+            {
+                float4 vertex  : POSITION;
+                float3 normal  : NORMAL;
+                float2 uv      : TEXCOORD0;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct v2fShadow
+            {
+                V2F_SHADOW_CASTER;
+                float2 uv : TEXCOORD1;
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            v2fShadow vertShadow(appdataShadow v)
+            {
+                v2fShadow o;
+                UNITY_SETUP_INSTANCE_ID(v);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+                TRANSFER_SHADOW_CASTER_NORMALOFFSET(o)
+                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+                return o;
+            }
+
+            float4 fragShadow(v2fShadow i) : SV_Target
+            {
+                fixed4 c = tex2D(_MainTex, i.uv) * _Color;
+
+                #if defined(_SURFACEMODE_CUTOUT)
+                    clip(c.a - _Cutoff);
+                #endif
+
+                SHADOW_CASTER_FRAGMENT(i)
             }
             ENDCG
         }

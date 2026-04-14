@@ -264,4 +264,22 @@ float3 KTBPBR_ComposeFinalColor(KTBPBRLightDatas d,
     return direct + indirect;
 }
 
+float KTBPBR_OneMinusReflectivityFromMetallic(float metallic)
+{
+    const float oneMinusDielectricSpec = 1.0 - KTBPBR_DIELECTRIC_F0.r; // 0.96
+    return oneMinusDielectricSpec - metallic * oneMinusDielectricSpec;
+}
+
+void KTBPBR_PreMultiplyAlpha(inout KTBPBRLightDatas datas,
+                             inout float alpha,
+                             float metallic)
+{
+    float oneMinusReflectivity = KTBPBR_OneMinusReflectivityFromMetallic(metallic);
+
+    datas.directDiffuse   *= alpha;
+    datas.indirectDiffuse *= alpha;
+
+    alpha = 1.0 - oneMinusReflectivity + alpha * oneMinusReflectivity;
+}
+
 #endif
