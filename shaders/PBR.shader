@@ -17,7 +17,12 @@ Shader "KTB/HLSLTraining/PBR"
         _NormalMapStrength              ("Normal Map Strength", Range(0,2)) = 1.0
 
         [Header(MatCap)]
+        [Toggle(_MATCAP_ON)]
+        _MatCapEnabled                  ("Enable MatCap", Float) = 0
+        [KeywordEnum(Additive, Multiply, Screen, Linear)]
+        _MatCapBlendMode                ("Blend Mode", Float) = 0
         _MatCap                         ("Material Capture", 2D) = "black" {}
+        _MatCapBlur                     ("MatCap Blur", Range(0, 5)) = 0.0
         _MatCapStrength                 ("MatCap Strength", Range(0,1)) = 0.0
         _MatCapMask                     ("MatCap Mask", 2D) = "white" {}
 
@@ -66,6 +71,8 @@ Shader "KTB/HLSLTraining/PBR"
             #pragma multi_compile_fwdbase
             #pragma multi_compile _ VERTEXLIGHT_ON
             #pragma multi_compile _ _SSAOQUALITY_SAMPLES_8 _SSAOQUALITY_SAMPLES_32
+            #pragma multi_compile _MATCAPBLENDMODE_ADDITIVE _MATCAPBLENDMODE_MULTIPLY _MATCAPBLENDMODE_SCREEN _MATCAPBLENDMODE_LINEAR
+            #pragma shader_feature_local _MATCAP_ON
             #pragma multi_compile_fog
 
             #include "UnityCG.cginc"
@@ -111,6 +118,7 @@ Shader "KTB/HLSLTraining/PBR"
             sampler2D   _MatCap;
             sampler2D   _MatCapMask;
             float       _MatCapStrength;
+            float       _MatCapBlur;
             float       _DirectLightIntensity;
             float       _IndirectLightIntensity;
             fixed4      _BackRimColor;
@@ -375,10 +383,23 @@ Shader "KTB/HLSLTraining/PBR"
                 float3 indirect = (datas.indirectDiffuse + datas.indirectSpecular) * _IndirectLightIntensity * ao;
                 float3 finalColor = direct + indirect + rim * ao;
 
-                float2 mUV = viewN.xy * 0.495 + 0.5;
-                float3 matcap = tex2D(_MatCap, mUV).rgb;
-                fixed  matcapMaskTex  = tex2D(_MatCapMask, i.uv).r;
-                finalColor = lerp(finalColor, 1.0 - (1.0 - finalColor) * (1.0 - matcap * matcapMaskTex), _MatCapStrength);
+                // MatCap
+                #if defined(_MATCAP_ON)
+                    float2 mUV = viewN.xy * 0.495 + 0.5;
+                    float3 matcap = tex2Dlod(_MatCap, float4(mUV, 0, _MatCapBlur)).rgb;
+                    fixed  matcapMaskTex  = tex2D(_MatCapMask, i.uv).r;
+                    float  matcapFactor   = matcapMaskTex * _MatCapStrength;
+
+                    #if defined(_MATCAPBLENDMODE_ADDITIVE)
+                        finalColor = finalColor + matcap * matcapFactor;
+                    #elif defined(_MATCAPBLENDMODE_MULTIPLY)
+                        finalColor = finalColor * lerp(1.0, matcap, matcapFactor);
+                    #elif defined(_MATCAPBLENDMODE_LINEAR)
+                        finalColor = lerp(finalColor, matcap, matcapFactor);
+                    #else
+                        finalColor = lerp(finalColor, 1.0 - (1.0 - finalColor) * (1.0 - matcap * matcapMaskTex), _MatCapStrength);
+                    #endif
+                #endif
 
                 fixed4 col = fixed4(finalColor, albedoTex.a);
                 UNITY_APPLY_FOG(i.fogCoord, col);
