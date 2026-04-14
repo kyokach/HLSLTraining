@@ -22,7 +22,7 @@ Shader "KTB/HLSLTraining/PBR"
         [KeywordEnum(Additive, Multiply, Screen, Linear)]
         _MatCapBlendMode                ("Blend Mode", Float) = 0
         _MatCap                         ("Material Capture", 2D) = "black" {}
-        _MatCapBlur                     ("MatCap Blur", Range(0, 5)) = 0.0
+        _MatCapBlur                     ("MatCap Blur", Range(0, 8)) = 0.0
         _MatCapStrength                 ("MatCap Strength", Range(0,1)) = 0.0
         _MatCapMask                     ("MatCap Mask", 2D) = "white" {}
 
