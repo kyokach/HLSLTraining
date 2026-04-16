@@ -6,6 +6,15 @@ Shader "KTB/HLSLTraining/PBR"
         _MainTex                        ("Albedo", 2D) = "white" {}
         _Color                          ("Color Tint", Color) = (1,1,1,1)
 
+        [Header(Color Correction)]
+        [Toggle(_COLOR_CORRECTION_ON)]
+        _ColorCorrectionEnabled         ("Enable Color Correction", Float) = 0
+        _CCMask                         ("Correction Mask (R)", 2D) = "white" {}
+        _CCHueShift                     ("Hue Shift", Range(-0.5, 0.5)) = 0.0
+        _CCSaturation                   ("Saturation", Range(0, 2)) = 1.0
+        _CCBrightness                   ("Brightness", Range(0, 2)) = 1.0
+        _CCContrast                     ("Contrast", Range(0, 2)) = 1.0
+
         // ------------------------------------------------------------------
         //  Rendering Mode
         //  推奨設定:
@@ -96,6 +105,7 @@ Shader "KTB/HLSLTraining/PBR"
             #pragma fragment frag
             #pragma multi_compile_fwdbase
             #pragma shader_feature_local _ VERTEXLIGHT_ON
+            #pragma shader_feature_local _COLOR_CORRECTION_ON
             #pragma shader_feature_local _ _SSAOQUALITY_SAMPLES_8 _SSAOQUALITY_SAMPLES_32
             #pragma shader_feature_local _MATCAPBLENDMODE_ADDITIVE _MATCAPBLENDMODE_MULTIPLY _MATCAPBLENDMODE_SCREEN _MATCAPBLENDMODE_LINEAR
             #pragma shader_feature_local _MATCAP_ON
@@ -138,6 +148,11 @@ Shader "KTB/HLSLTraining/PBR"
             sampler2D   _MainTex;
             float4      _MainTex_ST;
             fixed4      _Color;
+            sampler2D   _CCMask;
+            float       _CCHueShift;
+            float       _CCSaturation;
+            float       _CCBrightness;
+            float       _CCContrast;
             sampler2D   _MetallicMap;
             float       _Metallic;
             sampler2D   _RoughnessMap;
@@ -307,6 +322,43 @@ Shader "KTB/HLSLTraining/PBR"
             }
 
             // -----------------------------------------------------------------
+            // Color Correction (HSV + Brightness/Contrast)
+            // -----------------------------------------------------------------
+            float3 KTBCC_RGB2HSV(float3 c)
+            {
+                float4 K = float4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+                float4 p = lerp(float4(c.bg, K.wz), float4(c.gb, K.xy), step(c.b, c.g));
+                float4 q = lerp(float4(p.xyw, c.r), float4(c.r, p.yzx), step(p.x, c.r));
+                float  d = q.x - min(q.w, q.y);
+                const float e = 1.0e-10;
+                return float3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+            }
+
+            float3 KTBCC_HSV2RGB(float3 c)
+            {
+                float4 K = float4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+                float3 p = abs(frac(c.xxx + K.xyz) * 6.0 - K.www);
+                return c.z * lerp(K.xxx, saturate(p - K.xxx), c.y);
+            }
+
+            float3 KTBCC_Apply(float3 rawColor, float mask)
+            {
+                // HSV: Hue / Saturation
+                float3 hsv = KTBCC_RGB2HSV(max(rawColor, 0.0));
+                hsv.x = frac(hsv.x + _CCHueShift);
+                hsv.y = saturate(hsv.y * _CCSaturation);
+                float3 rgb = KTBCC_HSV2RGB(hsv);
+
+                // Brightness (scale) / Contrast (0.5中心のスケール)
+                rgb *= _CCBrightness;
+                rgb  = (rgb - 0.5) * _CCContrast + 0.5;
+
+                // 負値除去してマスク補間
+                rgb = max(rgb, 0.0);
+                return lerp(rawColor, rgb, saturate(mask));
+            }
+
+            // -----------------------------------------------------------------
             // Vertex / Fragment
             // -----------------------------------------------------------------
             v2f vert(appdata v)
@@ -332,7 +384,14 @@ Shader "KTB/HLSLTraining/PBR"
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
 
-                fixed4 albedoTex = tex2D(_MainTex, i.uv) * _Color;
+                fixed4 mainTex = tex2D(_MainTex, i.uv);
+
+                #if defined(_COLOR_CORRECTION_ON)
+                    float ccMask = tex2D(_CCMask, i.uv).r;
+                    mainTex.rgb = KTBCC_Apply(mainTex.rgb, ccMask);
+                #endif
+
+                fixed4 albedoTex = mainTex * _Color;
                 float3 albedo    = albedoTex.rgb;
                 float  alpha     = albedoTex.a;
 
