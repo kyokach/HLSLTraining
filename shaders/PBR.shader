@@ -85,8 +85,10 @@ Shader "KTB/KPBR"
         _SSAOThickness                  ("Thickness (xRadius)", Range(1.0, 4.0)) = 2.0
 
         [Header(VRChat Lighting)]
-        [Toggle(_VRCLIGHTVOLUMES)]
-        _VRCLightVolumesEnabled     ("Enable VRC Light Volumes", Float) = 0
+        [Toggle(KPBR_VRCLIGHTVOLUMES_WITHOUTPACKAGE)]
+        _VRCLightVolumesEnabled         ("Enable VRC Light Volumes", Float) = 0
+        [Toggle(KPBR_VRCLIGHTVOLUMES)]
+        _VRCLightVolumesEnabledOrg      ("Enable VRC Light Volumes", Float) = 0
 
         [Header(Fallback Light)]
         _LightDirection                 ("Light Direction", Vector) = (-1,-1,0,0)
@@ -118,6 +120,7 @@ Shader "KTB/KPBR"
             #pragma shader_feature_local _SSAO_ON
             #pragma shader_feature_local _SURFACEMODE_OPAQUE _SURFACEMODE_CUTOUT _SURFACEMODE_TRANSPARENT
             #pragma shader_feature_local _COLOR_CORRECTION_ON
+            #pragma shader_feature_local _VRCLIGHTVOLUMES_WITHOUTPACKAGE
             #pragma shader_feature_local _VRCLIGHTVOLUMES
             #pragma multi_compile_fog
 

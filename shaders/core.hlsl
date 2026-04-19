@@ -17,8 +17,11 @@
 #include "UnityImageBasedLighting.cginc"
 #include "AutoLight.cginc"
 #include "Lighting.cginc"
-#if defined(_VRCLIGHTVOLUMES)
-    #include "VRCLV/LightVolumes.cginc"
+
+#if defined(KPBR_VRCLIGHTVOLUMES)
+#include "Packages/red.sim.lightvolumes/Shaders/LightVolumes.cginc"
+#elif defined(KPBR_VRCLIGHTVOLUMES_WITHOUTPACKAGE)
+#include "VRCLV/LightVolumes.cginc"
 #endif
 
 #define KPBR_PI            3.14159265359
