@@ -256,7 +256,7 @@ Shader "KTB/KPBR"
                 float3 T0 = normalize(cross(up, N));
                 float3 B0 = cross(N, T0);
 
-                float theta = InterleavedGradientNoise(pixelCoord) * KTBPBR_PI * 2.0;
+                float theta = InterleavedGradientNoise(pixelCoord) * KPBR_PI * 2.0;
                 float cosT = cos(theta);
                 float sinT = sin(theta);
 
@@ -402,7 +402,7 @@ Shader "KTB/KPBR"
 
                 float  metallic  = tex2D(_MetallicMap,  i.uv).r * _Metallic;
                 float  roughness = tex2D(_RoughnessMap, i.uv).r * _Roughness;
-                roughness = max(roughness, KTBPBR_MIN_ROUGHNESS);
+                roughness = max(roughness, KPBR_MIN_ROUGHNESS);
 
                 float3 normalTex = UnpackNormal(tex2D(_NormalMap, i.uv));
                 normalTex.xy *= _NormalMapStrength;
@@ -424,7 +424,7 @@ Shader "KTB/KPBR"
                     float ao = 1.0;
                 #endif
 
-                KTBPBRSurface s;
+                KPBRSurface s;
                 s.albedo    = albedo;
                 s.metallic  = metallic;
                 s.roughness = roughness;
@@ -435,18 +435,18 @@ Shader "KTB/KPBR"
 
                 UNITY_LIGHT_ATTENUATION(atten, i, i.worldPos);
 
-                KTBPBRLightDatas datas;
-                KTBPBR_ComputeLights(datas, s,
+                KPBRLightDatas datas;
+                KPBR_ComputeLights(datas, s,
                                      _LightDirection.xyz,
                                      _LightColor.rgb,
                                      atten);
 
                 float3 rimL, rimLCol;
-                KTBPBR_GetDirectionalLight(_LightDirection.xyz, _LightColor.rgb, rimL, rimLCol);
+                KPBR_GetDirectionalLight(_LightDirection.xyz, _LightColor.rgb, rimL, rimLCol);
 
                 // Rim
                 #if defined(_RIM_ON)
-                    KTBPBRRimParams rimP;
+                    KPBRRimParams rimP;
                     rimP.backRimColor      = _BackRimColor.rgb;
                     rimP.backRimPower      = _BackRimPower;
                     rimP.backRimIntensity  = _BackRimIntensity;
@@ -454,7 +454,7 @@ Shader "KTB/KPBR"
                     rimP.innerRimPower     = _InnerRimPower;
                     rimP.innerRimIntensity = _InnerRimIntensity;
 
-                    float3 rim = KTBPBR_ComputeRim(s, rimL, rimLCol, atten, rimP);
+                    float3 rim = KPBR_ComputeRim(s, rimL, rimLCol, atten, rimP);
                 #else
                     float3 rim = 0.0;
                 #endif
