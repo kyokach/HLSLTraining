@@ -1,4 +1,4 @@
-Shader "KTB/HLSLTraining/PBR"
+Shader "KTB/KPBR"
 {
     Properties
     {
@@ -9,7 +9,7 @@ Shader "KTB/HLSLTraining/PBR"
         [Header(Color Correction)]
         [Toggle(_COLOR_CORRECTION_ON)]
         _ColorCorrectionEnabled         ("Enable Color Correction", Float) = 0
-        _CCMask                         ("Correction Mask (R)", 2D) = "white" {}
+        _ColorCorrectionMask            ("Correction Mask (R)", 2D) = "white" {}
         _CCHueShift                     ("Hue Shift", Range(-0.5, 0.5)) = 0.0
         _CCSaturation                   ("Saturation", Range(0, 2)) = 1.0
         _CCBrightness                   ("Brightness", Range(0, 2)) = 1.0
@@ -32,6 +32,8 @@ Shader "KTB/HLSLTraining/PBR"
         _DstBlend                       ("Dst Blend", Float) = 0
         [Enum(Off, 0, On, 1)]
         _ZWrite                         ("ZWrite", Float) = 1
+        [Enum(UnityEngine.Rendering.CullMode)]
+        _Cull                           ("Cull Mode (Off=Both, Front=裏面のみ, Back=表面のみ)", Float) = 2
 
         [Header(PBR Parameters)]
         _MetallicMap                    ("Metallic Map", 2D) = "white" {}
@@ -98,20 +100,20 @@ Shader "KTB/HLSLTraining/PBR"
 
             Blend  [_SrcBlend] [_DstBlend]
             ZWrite [_ZWrite]
-            Cull   Back
+            Cull   [_Cull]
 
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_fwdbase
             #pragma shader_feature_local _ VERTEXLIGHT_ON
-            #pragma shader_feature_local _COLOR_CORRECTION_ON
             #pragma shader_feature_local _ _SSAOQUALITY_SAMPLES_8 _SSAOQUALITY_SAMPLES_32
             #pragma shader_feature_local _MATCAPBLENDMODE_ADDITIVE _MATCAPBLENDMODE_MULTIPLY _MATCAPBLENDMODE_SCREEN _MATCAPBLENDMODE_LINEAR
             #pragma shader_feature_local _MATCAP_ON
             #pragma shader_feature_local _RIM_ON
             #pragma shader_feature_local _SSAO_ON
             #pragma shader_feature_local _SURFACEMODE_OPAQUE _SURFACEMODE_CUTOUT _SURFACEMODE_TRANSPARENT
+            #pragma shader_feature_local _COLOR_CORRECTION_ON
             #pragma multi_compile_fog
 
             #include "UnityCG.cginc"
@@ -148,7 +150,7 @@ Shader "KTB/HLSLTraining/PBR"
             sampler2D   _MainTex;
             float4      _MainTex_ST;
             fixed4      _Color;
-            sampler2D   _CCMask;
+            sampler2D   _ColorCorrectionMask;
             float       _CCHueShift;
             float       _CCSaturation;
             float       _CCBrightness;
@@ -343,17 +345,14 @@ Shader "KTB/HLSLTraining/PBR"
 
             float3 KTBCC_Apply(float3 rawColor, float mask)
             {
-                // HSV: Hue / Saturation
                 float3 hsv = KTBCC_RGB2HSV(max(rawColor, 0.0));
                 hsv.x = frac(hsv.x + _CCHueShift);
                 hsv.y = saturate(hsv.y * _CCSaturation);
                 float3 rgb = KTBCC_HSV2RGB(hsv);
 
-                // Brightness (scale) / Contrast (0.5中心のスケール)
                 rgb *= _CCBrightness;
                 rgb  = (rgb - 0.5) * _CCContrast + 0.5;
 
-                // 負値除去してマスク補間
                 rgb = max(rgb, 0.0);
                 return lerp(rawColor, rgb, saturate(mask));
             }
@@ -380,14 +379,16 @@ Shader "KTB/HLSLTraining/PBR"
                 return o;
             }
 
-            fixed4 frag(v2f i) : SV_Target
+            fixed4 frag(v2f i, float facing : VFACE) : SV_Target
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+
+                float faceSign = (facing > 0.0) ? 1.0 : -1.0;
 
                 fixed4 mainTex = tex2D(_MainTex, i.uv);
 
                 #if defined(_COLOR_CORRECTION_ON)
-                    float ccMask = tex2D(_CCMask, i.uv).r;
+                    float ccMask = tex2D(_ColorCorrectionMask, i.uv).r;
                     mainTex.rgb = KTBCC_Apply(mainTex.rgb, ccMask);
                 #endif
 
@@ -406,9 +407,10 @@ Shader "KTB/HLSLTraining/PBR"
                 float3 normalTex = UnpackNormal(tex2D(_NormalMap, i.uv));
                 normalTex.xy *= _NormalMapStrength;
                 normalTex = normalize(normalTex);
-                float3x3 TBN = float3x3(normalize(i.tangentWS),
-                                        normalize(i.bitanWS),
-                                        normalize(i.normalWS));
+
+                float3x3 TBN = float3x3(normalize(i.tangentWS) * faceSign,
+                                        normalize(i.bitanWS)   * faceSign,
+                                        normalize(i.normalWS)  * faceSign);
                 float3 N = normalize(mul(normalTex, TBN));
                 float3 V = normalize(_WorldSpaceCameraPos - i.worldPos);
 
@@ -515,7 +517,7 @@ Shader "KTB/HLSLTraining/PBR"
             Tags { "LightMode"="ShadowCaster" }
             ZWrite On
             ZTest LEqual
-            Cull Back
+            Cull [_Cull]
 
             CGPROGRAM
             #pragma vertex   vertShadow
