@@ -1,5 +1,5 @@
-#ifndef KTB_PBR_CORE_INCLUDED
-#define KTB_PBR_CORE_INCLUDED
+#ifndef KPBR_PBR_CORE_INCLUDED
+#define KPBR_PBR_CORE_INCLUDED
 
 // =====================================================================
 //  KPBR Lighting Core
@@ -17,12 +17,50 @@
 #include "UnityImageBasedLighting.cginc"
 #include "AutoLight.cginc"
 #include "Lighting.cginc"
+#if defined(_VRCLIGHTVOLUMES)
+    #include "VRCLV/LightVolumes.cginc"
+#endif
 
 #define KPBR_PI            3.14159265359
 #define KPBR_INV_PI        0.31830988618
 #define KPBR_MIN_ROUGHNESS 0.04
 #define KPBR_DIELECTRIC_F0 float3(0.04, 0.04, 0.04)
 #define KPBR_EPS           1e-7
+
+static float4 kpbrSHAr = 0;
+static float4 kpbrSHAg = 0;
+static float4 kpbrSHAb = 0;
+static float4 kpbrSHBr = 0;
+static float4 kpbrSHBg = 0;
+static float4 kpbrSHBb = 0;
+static float4 kpbrSHC  = 0;
+
+void KPBR_InitializeSH(float3 worldPos)
+{
+    kpbrSHAr = unity_SHAr;
+    kpbrSHAg = unity_SHAg;
+    kpbrSHAb = unity_SHAb;
+    kpbrSHBr = unity_SHBr;
+    kpbrSHBg = unity_SHBg;
+    kpbrSHBb = unity_SHBb;
+    kpbrSHC  = unity_SHC;
+
+    #if defined(VRC_LIGHT_VOLUMES_INCLUDED)
+    if (_UdonLightVolumeEnabled)
+    {
+        float3 L0, L1r, L1g, L1b;
+        LightVolumeSH(worldPos, L0, L1r, L1g, L1b);
+
+        kpbrSHAr = float4(L1r, L0.r);
+        kpbrSHAg = float4(L1g, L0.g);
+        kpbrSHAb = float4(L1b, L0.b);
+        kpbrSHBr = 0;
+        kpbrSHBg = 0;
+        kpbrSHBb = 0;
+        kpbrSHC  = 0;
+    }
+    #endif
+}
 
 struct KPBRSurface
 {
@@ -160,21 +198,21 @@ void KPBR_GetDirectionalLight(float3 fallbackDirWS, float3 fallbackColor,
 
 void KPBR_AccumulatePointLights(inout KPBRLightDatas datas, KPBRSurface s)
 {
-#if defined(VERTEXLIGHT_ON)
-    [unroll]
-    for (int idx = 0; idx < 4; idx++)
-    {
-        float3 toLight = float3(unity_4LightPosX0[idx], unity_4LightPosY0[idx], unity_4LightPosZ0[idx]) - s.worldPos;
-        float  distSqr = dot(toLight, toLight);
-        float  atten   = 1.0 / (1.0 + distSqr * unity_4LightAtten0[idx]);
+    #if defined(VERTEXLIGHT_ON)
+        [unroll]
+        for (int idx = 0; idx < 4; idx++)
+        {
+            float3 toLight = float3(unity_4LightPosX0[idx], unity_4LightPosY0[idx], unity_4LightPosZ0[idx]) - s.worldPos;
+            float  distSqr = dot(toLight, toLight);
+            float  atten   = 1.0 / (1.0 + distSqr * unity_4LightAtten0[idx]);
 
-        KPBRLight l;
-        l.direction = toLight * rsqrt(max(distSqr, KPBR_EPS));
-        l.color     = unity_LightColor[idx].rgb * atten;
-        l.NdotL     = saturate(dot(s.N, l.direction));
-        KPBR_EvaluateLight(datas, s, l);
-    }
-#endif
+            KPBRLight l;
+            l.direction = toLight * rsqrt(max(distSqr, KPBR_EPS));
+            l.color     = unity_LightColor[idx].rgb * atten;
+            l.NdotL     = saturate(dot(s.N, l.direction));
+            KPBR_EvaluateLight(datas, s, l);
+        }
+    #endif
 }
 
 void KPBR_EvaluateSpotLight(inout KPBRLightDatas datas, KPBRSurface s,
@@ -199,9 +237,22 @@ void KPBR_EvaluateSpotLight(inout KPBRLightDatas datas, KPBRSurface s,
     KPBR_EvaluateLight(datas, s, l);
 }
 
-float3 KPBR_SampleSH(float3 N)
+float3 KPBR_SampleSH(float3 N, float3 worldPos)
 {
-    return max(ShadeSH9(float4(N, 1.0)), 0.0);
+    float4 vB = N.xyzz * N.yzzx;
+
+    float3 res = float3(kpbrSHAr.w, kpbrSHAg.w, kpbrSHAb.w);
+    res.r += dot(kpbrSHBr, vB);
+    res.g += dot(kpbrSHBg, vB);
+    res.b += dot(kpbrSHBb, vB);
+    res += kpbrSHC.rgb * (N.x * N.x - N.y * N.y);
+
+    float3 l1;
+    l1.r = dot(kpbrSHAr.rgb, N);
+    l1.g = dot(kpbrSHAg.rgb, N);
+    l1.b = dot(kpbrSHAb.rgb, N);
+
+    return max(res + l1, 0.0);
 }
 
 float3 KPBR_SampleReflectionProbe(float3 R, float roughness)
@@ -218,7 +269,7 @@ void KPBR_AccumulateIndirect(inout KPBRLightDatas datas, KPBRSurface s)
     float3 F  = KPBR_F_SchlickRoughness(NdotV, F0, s.roughness);
     float3 kD = (1.0 - F) * (1.0 - s.metallic);
 
-    float3 irradiance = KPBR_SampleSH(s.N);
+    float3 irradiance = KPBR_SampleSH(s.N, s.worldPos);
     datas.indirectDiffuse += kD * s.albedo * irradiance * s.occlusion;
 
     float3 R = reflect(-s.V, s.N);
@@ -238,6 +289,8 @@ void KPBR_ComputeLights(out KPBRLightDatas datas, KPBRSurface s,
                           float mainLightAtten)
 {
     datas = (KPBRLightDatas)0;
+
+    KPBR_InitializeSH(s.worldPos);
 
     float3 L, lcol;
     KPBR_GetDirectionalLight(fallbackDirWS, fallbackColor, L, lcol);
