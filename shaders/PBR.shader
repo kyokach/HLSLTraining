@@ -292,8 +292,6 @@ Shader "KTB/KPBR"
                 float3 T_r = T0 * cosT + B0 * sinT;
                 float3 B_r = -T0 * sinT + B0 * cosT;
                 float3x3 TBN = float3x3(T_r, B_r, N);
-
-                // View→Clip の順方向は通常の射影行列で問題ない
                 float4x4 proj = GetStereoCameraProjection();
 
                 #if defined(UNITY_REVERSED_Z)
@@ -318,7 +316,6 @@ Shader "KTB/KPBR"
                     float3 sampleOff = mul(dir * _SSAORadius, TBN);
                     float3 samplePos = P + sampleOff;
 
-                    // サンプル点を View → Clip → Screen UV に射影
                     float4 sc = mul(proj, float4(samplePos, 1.0));
                     if (sc.w < 1e-4) continue;
 
