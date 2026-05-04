@@ -285,13 +285,6 @@ Shader "KTB/KPBR"
                 float3 T0 = normalize(cross(up, N));
                 float3 B0 = cross(N, T0);
 
-                float theta = InterleavedGradientNoise(pixelCoord) * KPBR_PI * 2.0;
-                float cosT = cos(theta);
-                float sinT = sin(theta);
-
-                float3 T_r = T0 * cosT + B0 * sinT;
-                float3 B_r = -T0 * sinT + B0 * cosT;
-                float3x3 TBN = float3x3(T_r, B_r, N);
                 float4x4 proj = GetStereoCameraProjection();
 
                 #if defined(UNITY_REVERSED_Z)
@@ -300,55 +293,81 @@ Shader "KTB/KPBR"
                     const float FAR_EPS_MAX = 1.0 - 1e-6;
                 #endif
 
-                float ao = 0.0;
-                float validSamples = 0.0;
+                const int ROTATION_COUNT = 4;
+                float aoAccum = 0.0;
 
-                [unroll]
-                for (int s = 0; s < SSAO_SAMPLE_COUNT; ++s)
+                for (int r = 0; r < ROTATION_COUNT; ++r)
                 {
-                    float3 k = SSAO_KERNEL[s];
-                    k.z = abs(k.z);
+                    float theta = InterleavedGradientNoise(
+                        pixelCoord + float2(r * 73.137, r * 41.291)
+                    ) * KPBR_PI * 2.0;
+                    float cosT = cos(theta);
+                    float sinT = sin(theta);
 
-                    float t = float(s) / float(SSAO_SAMPLE_COUNT);
-                    float scale = lerp(0.1, 1.0, t * t);
-                    float3 dir = k * scale;
+                    float3 T_r = T0 * cosT + B0 * sinT;
+                    float3 B_r = -T0 * sinT + B0 * cosT;
+                    float3x3 TBN = float3x3(T_r, B_r, N);
 
-                    float3 sampleOff = mul(dir * _SSAORadius, TBN);
-                    float3 samplePos = P + sampleOff;
+                    float ao = 0.0;
+                    float validSamples = 0.0;
 
-                    float4 sc = mul(proj, float4(samplePos, 1.0));
-                    if (sc.w < 1e-4) continue;
+                    int samplesPerRot = SSAO_SAMPLE_COUNT / ROTATION_COUNT;
 
-                    float2 sampleUV;
-                    sampleUV.x = sc.x / sc.w * 0.5 + 0.5;
-                    sampleUV.y = sc.y / sc.w * 0.5 + 0.5;
+                    [unroll]
+                    for (int s = 0; s < samplesPerRot; ++s)
+                    {
+                        int idx = r * samplesPerRot + s;
+                        float3 k = SSAO_KERNEL[idx];
+                        k.z = abs(k.z);
 
-                    if (any(sampleUV < 0.0) || any(sampleUV > 1.0)) continue;
+                        float t = float(idx) / float(SSAO_SAMPLE_COUNT);
+                        float scale = lerp(0.1, 1.0, t * t);
+                        float3 dir = k * scale;
 
-                    float2 sampleUVStereo = UnityStereoTransformScreenSpaceTex(sampleUV);
-                    float rawDepth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, sampleUVStereo);
+                        float3 sampleOff = mul(dir * _SSAORadius, TBN);
+                        float3 samplePos = P + sampleOff;
 
-                #if defined(UNITY_REVERSED_Z)
-                    if (rawDepth <= FAR_EPS_MIN) continue;
-                #else
-                    if (rawDepth >= FAR_EPS_MAX) continue;
-                #endif
+                        float4 sc = mul(proj, float4(samplePos, 1.0));
+                        if (sc.w < 1e-4) continue;
 
-                    float sceneDepth = GetLinearDepth(rawDepth, sampleUV);
-                    float sampleEyeZ = -samplePos.z;
+                        float2 sampleUV = sc.xy / sc.w * 0.5 + 0.5;
+                        if (any(sampleUV < 0.0) || any(sampleUV > 1.0)) continue;
 
-                    float dynamicBias = _SSAOBias * max(1.0, -P.z * 0.05);
+                        float2 sampleUVStereo = UnityStereoTransformScreenSpaceTex(sampleUV);
+                        float rawDepth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, sampleUVStereo);
 
-                    float diff = sampleEyeZ - sceneDepth;
-                    float rangeCheck = smoothstep(1.0, 0.0, abs(diff) / _SSAORadius);
+                        #if defined(UNITY_REVERSED_Z)
+                            if (rawDepth <= FAR_EPS_MIN) continue;
+                        #else
+                            if (rawDepth >= FAR_EPS_MAX) continue;
+                        #endif
 
-                    bool occluded = (diff > dynamicBias) && (diff < _SSAORadius * _SSAOThickness);
-                    ao += occluded ? pow(rangeCheck, _SSAOFalloff) : 0.0;
+                        float sceneDepth = GetLinearDepth(rawDepth, sampleUV);
+                        float sampleEyeZ = -samplePos.z;
+                        float dynamicBias = _SSAOBias * max(1.0, -P.z * 0.05);
+                        float diff = sampleEyeZ - sceneDepth;
+                        float rangeCheck = smoothstep(1.0, 0.0, abs(diff) / _SSAORadius);
 
-                    validSamples += 1.0;
+                        float biasAttenuation = smoothstep(0.0, dynamicBias * 3.0, diff);
+                        float thicknessMax = _SSAORadius * _SSAOThickness;
+                        float thicknessAttenuation = 1.0 - smoothstep(thicknessMax * 0.5, thicknessMax, diff);
+                        ao += biasAttenuation * thicknessAttenuation * pow(rangeCheck, _SSAOFalloff);
+                        validSamples += 1.0;
+                    }
+
+                    float norm = max(validSamples, 1.0);
+                    aoAccum += ao / norm;
                 }
-                float norm = max(validSamples, 1.0);
-                return saturate(1.0 - (ao / norm) * _SSAOIntensity);
+
+                return saturate(1.0 - (aoAccum / float(ROTATION_COUNT)) * _SSAOIntensity);
+            }
+
+            float3 MultiBounceAO(float ao, float3 albedo)
+            {
+                float3 a = 2.0404 * albedo - 0.3324;
+                float3 b = -4.7951 * albedo + 0.6417;
+                float3 c = 2.7552 * albedo + 0.6903;
+                return max(float3(ao, ao, ao), ((ao * a + b) * ao + c) * ao);
             }
 
             // -----------------------------------------------------------------
@@ -491,8 +510,9 @@ Shader "KTB/KPBR"
                 float wrapped = saturate((NdotL_main + _ShadowSoftness) / (1.0 + _ShadowSoftness));
                 float3 shadowTint = lerp(_ShadowColor.rgb, float3(1,1,1), atten * wrapped);
 
+                float3 aoMultiBounce = MultiBounceAO(ao, albedo);
                 float3 direct   = (datas.directDiffuse + datas.directSpecular) * _DirectLightIntensity * shadowTint;
-                float3 indirect = (datas.indirectDiffuse + datas.indirectSpecular) * _IndirectLightIntensity * ao;
+                float3 indirect = (datas.indirectDiffuse + datas.indirectSpecular) * _IndirectLightIntensity * aoMultiBounce;
                 float3 finalColor = direct + indirect + rim * ao;
 
                 // MatCap
