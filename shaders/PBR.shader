@@ -229,6 +229,28 @@ Shader "KTB/KPBR"
             #endif
             }
 
+            float4x4 GetStereoCameraInvProjection()
+            {
+            #if defined(USING_STEREO_MATRICES)
+                return unity_StereoCameraInvProjection[unity_StereoEyeIndex];
+            #else
+                return unity_CameraInvProjection;
+            #endif
+            }
+
+            float GetLinearDepth(float zDepthFromMap, float2 screenUV)
+            {
+            #if defined(UNITY_REVERSED_Z)
+                zDepthFromMap = 1.0 - zDepthFromMap;
+                if (zDepthFromMap >= 1.0) return _ProjectionParams.z;
+            #endif
+
+                float4 clipPos = float4(screenUV.xy, zDepthFromMap, 1.0);
+                clipPos.xyz = 2.0f * clipPos.xyz - 1.0f;
+                float4 camPos = mul(GetStereoCameraInvProjection(), clipPos);
+                return -camPos.z / camPos.w;
+            }
+
             float InterleavedGradientNoise(float2 p)
             {
                 return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715))));
@@ -244,16 +266,15 @@ Shader "KTB/KPBR"
 
             float3 ReconstructViewPos(float2 screenUV, float rawDepth)
             {
-                float linearDepth = LinearEyeDepth(rawDepth);
-                float2 ndc = screenUV * 2.0 - 1.0;
+                float z = rawDepth;
+            #if defined(UNITY_REVERSED_Z)
+                z = 1.0 - z;
+            #endif
 
-                float4x4 proj = GetStereoCameraProjection();
-                float2 viewXY = float2(
-                    (ndc.x - proj._m02) / proj._m00,
-                    (ndc.y - proj._m12) / proj._m11
-                );
-
-                return float3(viewXY * linearDepth, -linearDepth);
+                float4 clipPos = float4(screenUV * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+                float4 viewPos = mul(GetStereoCameraInvProjection(), clipPos);
+                viewPos.xyz /= viewPos.w;
+                return viewPos.xyz;
             }
 
             float ComputeSSAO(float2 screenUV, float3 P, float3 N)
@@ -272,6 +293,7 @@ Shader "KTB/KPBR"
                 float3 B_r = -T0 * sinT + B0 * cosT;
                 float3x3 TBN = float3x3(T_r, B_r, N);
 
+                // View→Clip の順方向は通常の射影行列で問題ない
                 float4x4 proj = GetStereoCameraProjection();
 
                 #if defined(UNITY_REVERSED_Z)
@@ -296,6 +318,7 @@ Shader "KTB/KPBR"
                     float3 sampleOff = mul(dir * _SSAORadius, TBN);
                     float3 samplePos = P + sampleOff;
 
+                    // サンプル点を View → Clip → Screen UV に射影
                     float4 sc = mul(proj, float4(samplePos, 1.0));
                     if (sc.w < 1e-4) continue;
 
@@ -314,7 +337,7 @@ Shader "KTB/KPBR"
                     if (rawDepth >= FAR_EPS_MAX) continue;
                 #endif
 
-                    float sceneDepth = LinearEyeDepth(rawDepth);
+                    float sceneDepth = GetLinearDepth(rawDepth, sampleUV);
                     float sampleEyeZ = -samplePos.z;
 
                     float dynamicBias = _SSAOBias * max(1.0, -P.z * 0.05);
